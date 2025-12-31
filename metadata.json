@@ -1,0 +1,5 @@
+{
+  "name": "One-Session Pharmacy (Ultra-Fast POS)",
+  "description": "A high-performance pharmacy management system optimized for low-latency inventory control and point-of-sale operations, featuring offline-first capabilities and medical-grade UI.",
+  "requestFramePermissions": []
+}
