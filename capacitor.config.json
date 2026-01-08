@@ -1,0 +1,14 @@
+
+{
+  "appId": "com.raha.pharmacy.onesession",
+  "appName": "صيدلية راحة",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true
+  }
+}

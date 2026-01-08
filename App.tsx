@@ -90,7 +90,7 @@ const App: React.FC = () => {
       const totalAmount = items.reduce((sum, item) => sum + (item.medicine.price * item.quantity), 0);
       const totalCost = items.reduce((sum, item) => sum + (item.medicine.costPrice * item.quantity), 0);
       
-      // Fix: db.transaction is available on the PharmacyDB instance because it extends Dexie
+      // Fix: db.transaction is available on the PharmacyDB instance because it extends Dexie correctly now.
       const saleId = await db.transaction('rw', [db.medicines, db.sales], async () => {
         for (const item of items) {
           const currentMed = await db.medicines.get(item.medicine.id!);
@@ -365,7 +365,7 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-4">
                         <button onClick={() => setCart(new Map())} className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-rose-400 active:scale-90 transition-all"><Trash2 size={22} /></button>
                         <div>
-                            {/* Fix: cartTotal is now recognized as number and toFixed is available */}
+                            {/* Fix: cartTotal is correctly typed as number */}
                             <div className="text-2xl font-black tabular-nums">{cartTotal.toFixed(2)} <span className="text-[10px] font-normal opacity-50">ج.م</span></div>
                             {/* Fix: Explicitly typing the reduce callback to avoid unknown error on i.quantity */}
                             <div className="text-[10px] font-bold text-emerald-400">{Array.from<CartItem>(cart.values()).reduce((s, i: CartItem) => s + i.quantity, 0)} أصناف مختارة</div>

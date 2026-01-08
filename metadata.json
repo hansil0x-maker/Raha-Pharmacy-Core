@@ -1,10 +1,12 @@
 {
-  "name": "الصيدلية الذكية - One Session",
-  "short_name": "الصيدلية",
-  "description": "نظام إدارة صيدلية فائق السرعة يدعم العمل بدون إنترنت وتجربة مستخدم شبيهة بالتطبيقات الأصلية.",
+  "name": "صيدلية راحة - الجلسة الواحدة",
+  "short_name": "راحة",
+  "description": "نظام إدارة صيدلية متطور يعمل كـ APK أصلي أو PWA.",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F8FAFC",
   "theme_color": "#059669",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera"
+  ]
 }

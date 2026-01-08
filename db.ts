@@ -13,7 +13,7 @@ export class PharmacyDB extends Dexie {
     
     // Configure the database version and schema inside the constructor
     // Use the inherited version() method to define stores. 
-    // Fix: Using named import for Dexie ensures correct type recognition of inherited methods.
+    // Fix: Using named import for Dexie { Dexie } ensures correct type recognition of inherited methods like version and transaction in TS.
     this.version(2).stores({
       medicines: '++id, name, barcode, stock, expiryDate, category',
       sales: '++id, timestamp'
