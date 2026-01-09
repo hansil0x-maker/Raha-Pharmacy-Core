@@ -8,6 +8,7 @@ export interface Medicine {
   stock: number;
   category: string;
   expiryDate: string;
+  salesCount?: number; // تتبع الاستخدام للفرز الذكي
 }
 
 export type PaymentMethod = 'cash' | 'bank' | 'credit';

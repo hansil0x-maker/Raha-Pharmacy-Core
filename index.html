@@ -58,5 +58,30 @@
 </head>
 <body class="h-screen w-screen overflow-hidden text-slate-900">
     <div id="root"></div>
+    <script>
+      // تسجيل الـ Service Worker للعمل أوفلاين
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          const swCode = `
+            const CACHE_NAME = 'raha-pharmacy-v1';
+            const ASSETS = [
+              '/',
+              '/index.html',
+              'https://cdn.tailwindcss.com',
+              'https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;900&display=swap'
+            ];
+            self.addEventListener('install', e => {
+              e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
+            });
+            self.addEventListener('fetch', e => {
+              e.respondWith(caches.match(e.request).then(res => res || fetch(e.request)));
+            });
+          `;
+          const blob = new Blob([swCode], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          navigator.serviceWorker.register(url);
+        });
+      }
+    </script>
 </body>
 </html>

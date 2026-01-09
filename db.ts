@@ -1,21 +1,19 @@
 
-import { Dexie, type Table } from 'dexie';
+import Dexie from 'dexie';
+import type { Table } from 'dexie';
 import { Medicine, Sale } from './types';
 
-// Define the database class extending Dexie
+// Use default import for Dexie to ensure full class functionality is inherited correctly in TypeScript
 export class PharmacyDB extends Dexie {
-  // Explicitly define tables with their types and primary key types (number)
   medicines!: Table<Medicine, number>;
   sales!: Table<Sale, number>;
 
   constructor() {
     super('PharmacyDB');
     
-    // Configure the database version and schema inside the constructor
-    // Use the inherited version() method to define stores. 
-    // Fix: Using named import for Dexie { Dexie } ensures correct type recognition of inherited methods like version and transaction in TS.
-    this.version(2).stores({
-      medicines: '++id, name, barcode, stock, expiryDate, category',
+    // Define the schema for the database. version() is a core Dexie method.
+    this.version(3).stores({
+      medicines: '++id, name, barcode, stock, expiryDate, category, salesCount',
       sales: '++id, timestamp'
     });
   }
