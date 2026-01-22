@@ -1,18 +1,36 @@
 
 {
-  "name": "صيدلية راحة - الجلسة الواحدة",
-  "short_name": "راحة",
-  "start_url": "index.html",
+  "name": "صيدلية راحة - النسخة الاحترافية",
+  "short_name": "راحة PRO",
+  "description": "نظام إدارة الصيدلية المتطور - الجلسة الواحدة",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#F8FAFC",
   "theme_color": "#059669",
-  "description": "نظام إدارة صيدلية متطور يعمل بدون إنترنت.",
+  "orientation": "portrait",
+  "scope": "/",
   "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/4320/4320337.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "https://cdn-icons-png.flaticon.com/512/4320/4320337.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     }
-  ]
+  ],
+  "categories": ["business", "medical"],
+  "screenshots": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/4320/4320337.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ],
+  "prefer_related_applications": false
 }

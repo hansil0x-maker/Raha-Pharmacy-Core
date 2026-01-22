@@ -8,18 +8,47 @@ export interface Medicine {
   stock: number;
   category: string;
   expiryDate: string;
-  salesCount?: number; // تتبع الاستخدام للفرز الذكي
+  addedDate: string; 
+  supplier: string;
+  usageCount: number;
+  lastSold?: number;
 }
 
-export type PaymentMethod = 'cash' | 'bank' | 'credit';
+export interface AppNotification {
+  id?: number;
+  message: string;
+  type: 'warning' | 'error' | 'info';
+  timestamp: number;
+}
+
+export interface Expense {
+  id?: number;
+  amount: number;
+  type: string;
+  description: string;
+  timestamp: number;
+}
+
+export interface Customer {
+  id?: number;
+  name: string;
+}
 
 export interface Sale {
   id?: number;
   totalAmount: number;
+  discount: number;
+  netAmount: number;
+  cashAmount: number;
+  bankAmount: number;
+  debtAmount: number;
+  bankTrxId?: string;
+  customerName?: string;
   totalCost: number;
+  profit: number;
   timestamp: number;
-  itemsJson: string; // List of {name, price, costPrice, quantity}
-  paymentMethod: PaymentMethod;
+  itemsJson: string; 
+  isReturned?: boolean;
 }
 
 export interface CartItem {
@@ -27,4 +56,4 @@ export interface CartItem {
   quantity: number;
 }
 
-export type ViewType = 'pos' | 'accounting';
+export type ViewType = 'pos' | 'accounting' | 'inventory' | 'expenses' | 'notifications';

@@ -1,87 +1,135 @@
-
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>صيدلية الجلسة الواحدة | Ultra POS</title>
+    <title>راحة PRO | نظام إدارة الصيدلية</title>
     
-    <!-- PWA Primary Meta Tags -->
-    <link rel="manifest" href="manifest.json">
+    <!-- Supabase Cloud Integration -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        // Global variables for cloud sync (to be configured later)
+        window.SUPABASE_URL = "";
+        window.SUPABASE_KEY = "";
+    </script>
+
+    <!-- PWA Meta Tags -->
+    <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="الصيدلية">
+    <meta name="apple-mobile-web-app-title" content="راحة PRO">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#059669">
     
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
     <style>
         :root {
             --emerald-primary: #10b981;
             --safe-area-inset-bottom: env(safe-area-inset-bottom);
         }
+        /* درع الأمان: حماية الواجهة */
         body {
             font-family: 'Noto Sans Arabic', sans-serif;
             background-color: #f8fafc;
             -webkit-tap-highlight-color: transparent;
-            user-select: none;
+            user-select: none; /* منع تحديد النصوص */
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
             overscroll-behavior-y: contain;
         }
-        /* Custom smooth scroll for mobile */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* Floating Animation */
-        @keyframes float {
-            0% { transform: translateY(0px); }
-            50% { transform: translateY(-5px); }
-            100% { transform: translateY(0px); }
+        /* منع سحب الصور */
+        img {
+            pointer-events: none;
         }
-        .float-btn { animation: float 3s ease-in-out infinite; }
-        
-        /* Skeleton loading pulse */
-        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "dexie": "https://esm.sh/dexie@^4.2.1",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
-  }
-}
-</script>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+        "dexie": "https://esm.sh/dexie@^4.2.1",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "react": "https://esm.sh/react@^19.2.3"
+      }
+    }
+    </script>
 </head>
 <body class="h-screen w-screen overflow-hidden text-slate-900">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+
+    <!-- درع الأمان: الحماية البرمجية -->
     <script>
-      // تسجيل الـ Service Worker للعمل أوفلاين
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          const swCode = `
-            const CACHE_NAME = 'raha-pharmacy-v1';
-            const ASSETS = [
-              '/',
-              '/index.html',
-              'https://cdn.tailwindcss.com',
-              'https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;900&display=swap'
-            ];
-            self.addEventListener('install', e => {
-              e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
-            });
-            self.addEventListener('fetch', e => {
-              e.respondWith(caches.match(e.request).then(res => res || fetch(e.request)));
-            });
-          `;
-          const blob = new Blob([swCode], { type: 'application/javascript' });
-          const url = URL.createObjectURL(blob);
-          navigator.serviceWorker.register(url);
+        // 1. منع النقر بيمين الفأرة
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        // 2. منع الاختصارات البرمجية
+        document.addEventListener('keydown', (e) => {
+            if (
+                e.key === 'F12' ||
+                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) ||
+                (e.ctrlKey && e.key === 'U') ||
+                (e.ctrlKey && e.key === 'S')
+            ) {
+                e.preventDefault();
+                return false;
+            }
         });
-      }
+
+        // 3. فخ المطورين (Debugger Trap)
+        (function() {
+            const trap = function() {
+                setInterval(function() {
+                    debugger;
+                }, 100);
+            };
+            try {
+                trap();
+            } catch (e) {}
+        })();
+
+        // 4. منع النسخ
+        document.addEventListener('copy', (e) => {
+            e.preventDefault();
+            return false;
+        });
+
+        // 5. تفعيل التخزين الدائم (Persistent Storage)
+        async function requestPersistentStorage() {
+            if (navigator.storage && navigator.storage.persist) {
+                const isPersisted = await navigator.storage.persist();
+                console.log(`Raha Pro Storage: Persistent = ${isPersisted}`);
+            }
+        }
+        requestPersistentStorage();
+
+        // 6. تسجيل الـ Service Worker الخارجي (استراتيجية تسجيل فورية)
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+                    .then(reg => {
+                        console.log('Raha Pro SW: Registered successfully');
+                        
+                        // التحقق من وجود تحديثات
+                        reg.onupdatefound = () => {
+                            const installingWorker = reg.installing;
+                            installingWorker.onstatechange = () => {
+                                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    console.log('Raha Pro SW: New update ready, refresh to apply.');
+                                }
+                            };
+                        };
+                    })
+                    .catch(err => console.log('Raha Pro SW: Registration failed', err));
+            });
+        }
     </script>
 </body>
 </html>

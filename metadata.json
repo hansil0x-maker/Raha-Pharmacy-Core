@@ -1,7 +1,7 @@
 {
-  "name": "صيدلية راحة - الجلسة الواحدة",
+  "name": "راحه",
   "short_name": "راحة",
-  "description": "نظام إدارة صيدلية متطور يعمل كـ APK أصلي أو PWA.",
+  "description": "نظام إدارة متطور يعمل كـ APK أصلي أو PWA.",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F8FAFC",
