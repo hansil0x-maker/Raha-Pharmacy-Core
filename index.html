@@ -3,12 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <!-- Supabase Library - Priority Load -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
     <title>راحة PRO | نظام إدارة الصيدلية</title>
     
-    <!-- Supabase Cloud Integration -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Supabase Cloud Integration Variables -->
     <script>
-        // Global variables for cloud sync (to be configured later)
+        // Global variables for cloud sync
         window.SUPABASE_URL = "";
         window.SUPABASE_KEY = "";
     </script>
@@ -29,12 +32,11 @@
             --emerald-primary: #10b981;
             --safe-area-inset-bottom: env(safe-area-inset-bottom);
         }
-        /* درع الأمان: حماية الواجهة */
         body {
             font-family: 'Noto Sans Arabic', sans-serif;
             background-color: #f8fafc;
             -webkit-tap-highlight-color: transparent;
-            user-select: none; /* منع تحديد النصوص */
+            user-select: none;
             -webkit-user-select: none;
             -moz-user-select: none;
             -ms-user-select: none;
@@ -42,11 +44,7 @@
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        
-        /* منع سحب الصور */
-        img {
-            pointer-events: none;
-        }
+        img { pointer-events: none; }
     </style>
 
     <script type="importmap">
@@ -56,7 +54,8 @@
         "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
         "dexie": "https://esm.sh/dexie@^4.2.1",
         "react/": "https://esm.sh/react@^19.2.3/",
-        "react": "https://esm.sh/react@^19.2.3"
+        "react": "https://esm.sh/react@^19.2.3",
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
       }
     }
     </script>
@@ -65,69 +64,28 @@
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
 
-    <!-- درع الأمان: الحماية البرمجية -->
     <script>
-        // 1. منع النقر بيمين الفأرة
         document.addEventListener('contextmenu', event => event.preventDefault());
-
-        // 2. منع الاختصارات البرمجية
         document.addEventListener('keydown', (e) => {
-            if (
-                e.key === 'F12' ||
-                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) ||
-                (e.ctrlKey && e.key === 'U') ||
-                (e.ctrlKey && e.key === 'S')
-            ) {
+            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) || (e.ctrlKey && e.key === 'U') || (e.ctrlKey && e.key === 'S')) {
                 e.preventDefault();
                 return false;
             }
         });
-
-        // 3. فخ المطورين (Debugger Trap)
         (function() {
-            const trap = function() {
-                setInterval(function() {
-                    debugger;
-                }, 100);
-            };
-            try {
-                trap();
-            } catch (e) {}
+            const trap = function() { setInterval(function() { debugger; }, 100); };
+            try { trap(); } catch (e) {}
         })();
-
-        // 4. منع النسخ
-        document.addEventListener('copy', (e) => {
-            e.preventDefault();
-            return false;
-        });
-
-        // 5. تفعيل التخزين الدائم (Persistent Storage)
+        document.addEventListener('copy', (e) => { e.preventDefault(); return false; });
         async function requestPersistentStorage() {
             if (navigator.storage && navigator.storage.persist) {
-                const isPersisted = await navigator.storage.persist();
-                console.log(`Raha Pro Storage: Persistent = ${isPersisted}`);
+                await navigator.storage.persist();
             }
         }
         requestPersistentStorage();
-
-        // 6. تسجيل الـ Service Worker الخارجي (استراتيجية تسجيل فورية)
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
-                    .then(reg => {
-                        console.log('Raha Pro SW: Registered successfully');
-                        
-                        // التحقق من وجود تحديثات
-                        reg.onupdatefound = () => {
-                            const installingWorker = reg.installing;
-                            installingWorker.onstatechange = () => {
-                                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                    console.log('Raha Pro SW: New update ready, refresh to apply.');
-                                }
-                            };
-                        };
-                    })
-                    .catch(err => console.log('Raha Pro SW: Registration failed', err));
+                navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
             });
         }
     </script>
