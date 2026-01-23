@@ -294,7 +294,7 @@ const App: React.FC = () => {
         try {
             const items = Array.from(cart.values());
             const totalCost = items.reduce((s, i) => s + (i.medicine.costPrice * i.quantity), 0);
-            
+
             // تحضير بيانات البيع (تشمل: اسم المنتج، السعر، الكمية، والتاريخ في items_json و timestamp)
             const saleData = {
                 total_amount: cartTotal,
@@ -361,26 +361,44 @@ const App: React.FC = () => {
                         quantity_to_deduct: item.quantity
                     });
 
-                // إذا فشلت RPC، جرب update مباشرة
+                // إذا فشلت RPC، جرب البحث والتحديث/الإضافة مباشرة
                 if (inventoryError) {
-                    // البحث عن المنتج في جدول inventory
+                    // البحث عن المنتج في جدول inventory (بدون استثناء إذا لم يوجد)
                     const { data: inventoryItem, error: fetchError } = await supabase
                         .from('inventory')
-                        .select('id, stock')
+                        .select('*')
                         .eq('name', item.medicine.name)
-                        .single();
+                        .maybeSingle();
 
-                    if (!fetchError && inventoryItem) {
+                    if (fetchError) {
+                        console.error(`خطأ في قراءة مخزون ${item.medicine.name}:`, fetchError);
+                        continue;
+                    }
+
+                    if (inventoryItem) {
+                        // المنتج موجود: تحديث الكمية
                         const { error: updateError } = await supabase
                             .from('inventory')
                             .update({ stock: inventoryItem.stock - item.quantity })
-                            .eq('id', inventoryItem.id);
+                            .eq('name', item.medicine.name);
 
                         if (updateError) {
                             console.error(`خطأ في تحديث مخزون ${item.medicine.name}:`, updateError);
                         }
                     } else {
-                        console.error(`لم يتم العثور على المنتج ${item.medicine.name} في المخزون السحابي:`, fetchError);
+                        // المنتج غير موجود: إضافة سطر جديد
+                        const { error: insertError } = await supabase
+                            .from('inventory')
+                            .insert({
+                                name: item.medicine.name,
+                                stock: -item.quantity  // كمية سالبة لأن المنتج غير موجود أصلاً
+                            });
+
+                        if (insertError) {
+                            console.error(`خطأ في إضافة منتج ${item.medicine.name} للمخزون:`, insertError);
+                        } else {
+                            console.log(`تم إضافة ${item.medicine.name} للمخزون السحابي`);
+                        }
                     }
                 }
             }
