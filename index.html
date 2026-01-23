@@ -85,7 +85,10 @@
         requestPersistentStorage();
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+                // Fixed: Use relative path for SW to prevent Origin mismatch in preview environments
+                navigator.serviceWorker.register('service-worker.js')
+                .then(reg => console.log('SW Registered'))
+                .catch(err => console.log('SW Registration Failed', err));
             });
         }
     </script>
