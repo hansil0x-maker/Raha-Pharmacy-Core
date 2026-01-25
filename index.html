@@ -11,9 +11,10 @@
     
     <!-- Supabase Cloud Integration Variables -->
     <script>
-        // Global variables for cloud sync
-        window.SUPABASE_URL = "";
-        window.SUPABASE_KEY = "";
+        // Global variables for cloud sync - Supporting Vercel and window.env injection
+        // Priority: window.env (Vercel injection) > fallback to empty
+        window.SUPABASE_URL = window.env?.SUPABASE_URL || "";
+        window.SUPABASE_KEY = window.env?.SUPABASE_KEY || "";
     </script>
 
     <!-- PWA Meta Tags -->
@@ -42,9 +43,47 @@
             -ms-user-select: none;
             overscroll-behavior-y: contain;
         }
+
+        /* إخفاء التطبيق افتراضياً لضمان الأمان قبل التحقق */
+        #root { display: none; }
+
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         img { pointer-events: none; }
+
+        /* شاشة القفل Opininit بتصميم زجاجي احترافي */
+        #lock-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .lock-card {
+            background: white;
+            padding: 3rem 2rem;
+            border-radius: 50px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .auth-input {
+            background: #f1f5f9;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+        .auth-input:focus {
+            background: white;
+            border-color: #10b981;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+        }
     </style>
 
     <script type="importmap">
@@ -61,10 +100,77 @@
     </script>
 </head>
 <body class="h-screen w-screen overflow-hidden text-slate-900">
+
+    <!-- شاشة التحقق Opininit - تظهر أولاً قبل تحميل التطبيق -->
+    <div id="lock-screen" style="display: none;">
+        <div class="lock-card animate-in zoom-in duration-500">
+            <div class="w-24 h-24 bg-emerald-600 rounded-[35px] flex items-center justify-center text-white shadow-2xl shadow-emerald-200 mx-auto mb-8">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            
+            <h2 class="text-3xl font-black text-slate-800 mb-2">راحة PRO</h2>
+            <p class="text-sm font-bold text-slate-400 mb-10 uppercase tracking-[0.2em]">نظام إدارة الجلسة الواحدة</p>
+            
+            <div class="space-y-4">
+                <input type="password" id="auth-code" placeholder="أدخل رمز الجلسة..." 
+                    class="auth-input w-full outline-none p-5 rounded-3xl font-black text-center text-2xl tracking-widest">
+                
+                <button id="auth-btn" 
+                    class="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-lg shadow-xl active:scale-95 hover:bg-black transition-all">
+                    تفعيل النظام
+                </button>
+            </div>
+            
+            <p id="auth-error" class="text-rose-500 text-xs font-black mt-6 opacity-0 transition-opacity">الرمز غير صحيح، يرجى مراجعة المسؤول</p>
+        </div>
+    </div>
+
     <div id="root"></div>
+    
     <script type="module" src="/index.tsx"></script>
 
     <script>
+        // منطق الحماية والتحقق Opininit
+        const lockScreen = document.getElementById('lock-screen');
+        const rootDiv = document.getElementById('root');
+        const authInput = document.getElementById('auth-code');
+        const authBtn = document.getElementById('auth-btn');
+        const authError = document.getElementById('auth-error');
+
+        function checkAuth() {
+            if (localStorage.getItem('isAuthorized') === 'true') {
+                lockScreen.style.display = 'none';
+                rootDiv.style.display = 'block';
+            } else {
+                lockScreen.style.display = 'flex';
+                rootDiv.style.display = 'none';
+                authInput.focus();
+            }
+        }
+
+        authBtn.addEventListener('click', () => {
+            if (authInput.value === 'Opininit') {
+                localStorage.setItem('isAuthorized', 'true');
+                window.location.reload();
+            } else {
+                authError.style.opacity = '1';
+                authInput.classList.add('border-rose-500');
+                authInput.value = '';
+                setTimeout(() => {
+                    authError.style.opacity = '0';
+                    authInput.classList.remove('border-rose-500');
+                }, 2500);
+            }
+        });
+
+        authInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') authBtn.click();
+        });
+
+        // تشغيل فحص الصلاحية فوراً
+        checkAuth();
+
+        // حماية الواجهة المتقدمة
         document.addEventListener('contextmenu', event => event.preventDefault());
         document.addEventListener('keydown', (e) => {
             if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) || (e.ctrlKey && e.key === 'U') || (e.ctrlKey && e.key === 'S')) {
@@ -72,20 +178,23 @@
                 return false;
             }
         });
+
         (function() {
             const trap = function() { setInterval(function() { debugger; }, 100); };
             try { trap(); } catch (e) {}
         })();
+
         document.addEventListener('copy', (e) => { e.preventDefault(); return false; });
+        
         async function requestPersistentStorage() {
             if (navigator.storage && navigator.storage.persist) {
                 await navigator.storage.persist();
             }
         }
         requestPersistentStorage();
+
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                // Fixed: Use relative path for SW to prevent Origin mismatch in preview environments
                 navigator.serviceWorker.register('service-worker.js')
                 .then(reg => console.log('SW Registered'))
                 .catch(err => console.log('SW Registration Failed', err));

@@ -1,4 +1,3 @@
-
 const CACHE_NAME = 'raha-pro-v5-static';
 const OFFLINE_URL = '/index.html';
 
@@ -49,38 +48,66 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// حدث الجلب (Fetch): استراتيجية Cache-First الصارمة
+// حدث الجلب (Fetch): استراتيجية هجينة (Network-First للبرمجيات، Cache-First للأصول)
 self.addEventListener('fetch', (event) => {
   // استثناء الطلبات التي ليست GET
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      // 1. إذا وجد في الكاش، أرجعه فوراً (Cache-First)
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+  const url = new URL(event.request.url);
+  const isCodeFile = 
+    url.pathname.endsWith('.tsx') || 
+    url.pathname.endsWith('.ts') || 
+    url.pathname.endsWith('.js') || 
+    url.pathname === '/' || 
+    url.pathname.endsWith('index.html');
 
-      // 2. إذا لم يوجد، اطلبه من الشبكة
-      return fetch(event.request).then((networkResponse) => {
-        // فحص صحة الاستجابة قبل تخزينها
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic' && !event.request.url.startsWith('https://')) {
+  if (isCodeFile) {
+    // استراتيجية الشبكة أولاً (Network-First) للملفات البرمجية لضمان التحديث الفوري
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
           return networkResponse;
+        })
+        .catch(() => {
+          // في حالة فشل الشبكة (أوفلاين)، ابحث في الكاش
+          return caches.match(event.request).then((cachedResponse) => {
+            if (cachedResponse) return cachedResponse;
+            // إذا لم يوجد في الكاش وكان طلباً للمسار الأساسي، أرجع صفحة الأوفلاين
+            if (event.request.mode === 'navigate') {
+              return caches.match(OFFLINE_URL);
+            }
+          });
+        })
+    );
+  } else {
+    // استراتيجية الكاش أولاً (Cache-First) للصور والخطوط والمكتبات الخارجية لضمان السرعة
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        // تخزين النسخة الجديدة في الكاش للاستخدام اللاحق
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+        return fetch(event.request).then((networkResponse) => {
+          if (!networkResponse || networkResponse.status !== 200) {
+            return networkResponse;
+          }
+
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+
+          return networkResponse;
+        }).catch(() => {
+          // صمت عند الفشل للأصول غير الضرورية
         });
-
-        return networkResponse;
-      }).catch(() => {
-        // 3. في حالة فشل الشبكة تماماً (أوفلاين) وفقدان الملف من الكاش
-        if (event.request.mode === 'navigate') {
-          return caches.match(OFFLINE_URL);
-        }
-      });
-    })
-  );
+      })
+    );
+  }
 });
