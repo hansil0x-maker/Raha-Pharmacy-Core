@@ -32,6 +32,7 @@ const App: React.FC = () => {
     const [invStockFilter, setInvStockFilter] = useState<'all' | 'low' | 'out' | 'stagnant'>('all');
     const [invExpiryFilter, setInvExpiryFilter] = useState<'all' | 'expired' | 'near'>('all');
     const [invSupplierFilter, setInvSupplierFilter] = useState('الكل');
+    const [invCategoryFilter, setInvCategoryFilter] = useState('الكل');
     const [invDateFilter, setInvDateFilter] = useState('');
     // Accounting Filters (Updated)
     const [accDateFilter, setAccDateFilter] = useState(new Date().toISOString().split('T')[0]);
@@ -276,7 +277,7 @@ const App: React.FC = () => {
             else if (invStockFilter === 'out') matches = m.stock <= 0;
             else if (invStockFilter === 'stagnant') matches = !m.lastSold || (now - (typeof m.lastSold === 'number' ? m.lastSold : 0) > 60 * 24 * 60 * 60 * 1000);
             if (matches && invDateFilter) matches = m.addedDate === invDateFilter;
-            if (matches && activeCategory !== 'الكل') matches = m.category === activeCategory;
+            if (matches && invCategoryFilter !== 'الكل') matches = m.category === invCategoryFilter;
             if (matches && invSupplierFilter !== 'الكل') matches = m.supplier === invSupplierFilter;
             if (matches) {
                 if (invExpiryFilter === 'expired') matches = m.expiryDate < today;
@@ -692,6 +693,9 @@ const App: React.FC = () => {
                                 <select className="bg-slate-50 p-3 rounded-2xl text-[10px] font-black border-none outline-none" value={invSupplierFilter} onChange={e => setInvSupplierFilter(e.target.value)}>
                                     {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
                                 </select>
+                                <select className="bg-slate-50 p-3 rounded-2xl text-[10px] font-black border-none outline-none" value={invCategoryFilter} onChange={e => setInvCategoryFilter(e.target.value)}>
+                                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
                             </div>
 
                             <div className="overflow-x-auto no-scrollbar">
@@ -701,6 +705,7 @@ const App: React.FC = () => {
                                             <th className="p-4">الصنف</th>
                                             <th className="p-4">الكمية</th>
                                             <th className="p-4">الأسعار</th>
+                                            <th className="p-4">تاريخ الشراء</th>
                                             <th className="p-4">الانتهاء</th>
                                             <th className="p-4"></th>
                                         </tr>
@@ -721,6 +726,7 @@ const App: React.FC = () => {
                                                         <div className="text-slate-400 text-[10px]">{m.costPrice.toFixed(2)}</div>
                                                     </div>
                                                 </td>
+                                                <td className="p-4 text-slate-400 whitespace-nowrap text-[10px]">{m.addedDate || 'غير محدد'}</td>
                                                 <td className="p-4 text-slate-400 whitespace-nowrap">{m.expiryDate}</td>
                                                 <td className="p-4 text-left">
                                                     <button onClick={() => { setEditingMed(m); setIsEditOpen(true); }} className="p-2 text-slate-300 hover:text-emerald-500 transition-colors"><Edit3 size={16} /></button>
@@ -905,8 +911,13 @@ const App: React.FC = () => {
                 <button onClick={() => setView('pos')} className={`flex flex-col items-center gap-1 transition-all ${view === 'pos' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
                     <ShoppingCart size={24} strokeWidth={view === 'pos' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">البيع</span>
                 </button>
-                <div className="w-16 flex flex-col items-center justify-center opacity-20 scale-75">
-                    <p className="text-[6px] font-black text-slate-800 text-center leading-tight">Property Rights Protected<br />© 2026</p>
+                <div className="relative -top-6">
+                    <button
+                        onClick={() => { setEditingMed(null); setIsEditOpen(true); }}
+                        className="w-14 h-14 bg-emerald-600 rounded-[20px] shadow-2xl shadow-emerald-200 flex items-center justify-center text-white active:scale-95 transition-all rotate-45 group hover:rotate-[135deg]"
+                    >
+                        <Plus size={32} className="-rotate-45" />
+                    </button>
                 </div>
                 <button onClick={() => setView('accounting')} className={`flex flex-col items-center gap-1 transition-all ${view === 'accounting' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
                     <BarChart3 size={24} strokeWidth={view === 'accounting' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">التقارير</span>
@@ -991,7 +1002,7 @@ const App: React.FC = () => {
                                 name: f.nm.value, barcode: f.bc.value, price: parseFloat(f.pr.value) || 0,
                                 costPrice: parseFloat(f.cp.value) || 0, stock: parseInt(f.st.value) || 0,
                                 category: f.ct.value, expiryDate: f.ex.value, supplier: f.sp.value,
-                                addedDate: editingMed?.addedDate || new Date().toISOString().split('T')[0],
+                                addedDate: f.ad.value || new Date().toISOString().split('T')[0],
                                 usageCount: editingMed?.usageCount || 0
                             };
                             if (editingMed?.id) await db.medicines.update(editingMed.id, data);
@@ -1032,6 +1043,10 @@ const App: React.FC = () => {
                                     <label className="text-[10px] font-black text-slate-400 mr-2">المورد</label>
                                     <input name="sp" list="sup-list-edit" defaultValue={editingMed?.supplier} className="w-full bg-slate-50 p-5 rounded-3xl font-bold outline-none" />
                                     <datalist id="sup-list-edit">{suppliers.map(s => <option key={s} value={s}>{s}</option>)}</datalist>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-black text-emerald-500 mr-2 flex items-center gap-1"><Calendar size={12} /> تاريخ الإضافة (الشراء)</label>
+                                    <input name="ad" type="date" defaultValue={editingMed?.addedDate || new Date().toISOString().split('T')[0]} required className="w-full bg-emerald-50/20 p-5 rounded-3xl font-bold outline-none border-2 border-emerald-50 focus:border-emerald-400 transition-all appearance-none" />
                                 </div>
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-black text-rose-500 mr-2 flex items-center gap-1"><Calendar size={12} /> تاريخ الصلاحية</label>
