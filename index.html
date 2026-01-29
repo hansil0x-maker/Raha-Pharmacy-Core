@@ -4,20 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
-    <!-- Supabase Library - Priority Load -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
     <title>راحة PRO | نظام إدارة الصيدلية</title>
     
-    <!-- Supabase Cloud Integration Variables -->
     <script>
-        // Global variables for cloud sync - Supporting Vercel and window.env injection
-        // Priority: window.env (Vercel injection) > fallback to empty
+        // المتغيرات العالمية للمزامنة السحابية
         window.SUPABASE_URL = window.env?.SUPABASE_URL || "";
         window.SUPABASE_KEY = window.env?.SUPABASE_KEY || "";
     </script>
 
-    <!-- PWA Meta Tags -->
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -44,46 +40,15 @@
             overscroll-behavior-y: contain;
         }
 
-        /* إخفاء التطبيق افتراضياً لضمان الأمان قبل التحقق */
-        #root { display: none; }
+        /* جعل التطبيق متاحاً فوراً لـ React للتحكم فيه */
+        #root { 
+            display: block; 
+            min-height: 100vh;
+        }
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         img { pointer-events: none; }
-
-        /* شاشة القفل Opininit بتصميم زجاجي احترافي */
-        #lock-screen {
-            position: fixed;
-            inset: 0;
-            z-index: 9999;
-            background: rgba(15, 23, 42, 0.7);
-            backdrop-filter: blur(40px);
-            -webkit-backdrop-filter: blur(40px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
-        }
-        .lock-card {
-            background: white;
-            padding: 3rem 2rem;
-            border-radius: 50px;
-            width: 100%;
-            max-width: 420px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .auth-input {
-            background: #f1f5f9;
-            border: 2px solid transparent;
-            transition: all 0.3s ease;
-        }
-        .auth-input:focus {
-            background: white;
-            border-color: #10b981;
-            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
-        }
     </style>
 
     <script type="importmap">
@@ -94,6 +59,7 @@
         "dexie": "https://esm.sh/dexie@^4.2.1",
         "react/": "https://esm.sh/react@^19.2.3/",
         "react": "https://esm.sh/react@^19.2.3",
+        "react-dom": "https://esm.sh/react-dom@^19.2.3",
         "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
       }
     }
@@ -101,91 +67,25 @@
 </head>
 <body class="h-screen w-screen overflow-hidden text-slate-900">
 
-    <!-- شاشة التحقق Opininit - تظهر أولاً قبل تحميل التطبيق -->
-    <div id="lock-screen" style="display: none;">
-        <div class="lock-card animate-in zoom-in duration-500">
-            <div class="w-24 h-24 bg-emerald-600 rounded-[35px] flex items-center justify-center text-white shadow-2xl shadow-emerald-200 mx-auto mb-8">
-                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            </div>
-            
-            <h2 class="text-3xl font-black text-slate-800 mb-2">راحة PRO</h2>
-            <p class="text-sm font-bold text-slate-400 mb-10 uppercase tracking-[0.2em]">نظام إدارة الجلسة الواحدة</p>
-            
-            <div class="space-y-4">
-                <input type="password" id="auth-code" placeholder="أدخل رمز الجلسة..." 
-                    class="auth-input w-full outline-none p-5 rounded-3xl font-black text-center text-2xl tracking-widest">
-                
-                <button id="auth-btn" 
-                    class="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-lg shadow-xl active:scale-95 hover:bg-black transition-all">
-                    تفعيل النظام
-                </button>
-            </div>
-            
-            <p id="auth-error" class="text-rose-500 text-xs font-black mt-6 opacity-0 transition-opacity">الرمز غير صحيح، يرجى مراجعة المسؤول</p>
-        </div>
-    </div>
-
     <div id="root"></div>
     
     <script type="module" src="/index.tsx"></script>
 
     <script>
-        // منطق الحماية والتحقق Opininit
-        const lockScreen = document.getElementById('lock-screen');
-        const rootDiv = document.getElementById('root');
-        const authInput = document.getElementById('auth-code');
-        const authBtn = document.getElementById('auth-btn');
-        const authError = document.getElementById('auth-error');
-
-        function checkAuth() {
-            if (localStorage.getItem('isAuthorized') === 'true') {
-                lockScreen.style.display = 'none';
-                rootDiv.style.display = 'block';
-            } else {
-                lockScreen.style.display = 'flex';
-                rootDiv.style.display = 'none';
-                authInput.focus();
-            }
-        }
-
-        authBtn.addEventListener('click', () => {
-            if (authInput.value === 'Opininit') {
-                localStorage.setItem('isAuthorized', 'true');
-                window.location.reload();
-            } else {
-                authError.style.opacity = '1';
-                authInput.classList.add('border-rose-500');
-                authInput.value = '';
-                setTimeout(() => {
-                    authError.style.opacity = '0';
-                    authInput.classList.remove('border-rose-500');
-                }, 2500);
-            }
-        });
-
-        authInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') authBtn.click();
-        });
-
-        // تشغيل فحص الصلاحية فوراً
-        checkAuth();
-
-        // حماية الواجهة المتقدمة
+        // حماية الواجهة (منع النسخ والقائمة اليمنى)
         document.addEventListener('contextmenu', event => event.preventDefault());
+        
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) || (e.ctrlKey && e.key === 'U') || (e.ctrlKey && e.key === 'S')) {
+            // منع اختصارات المطورين لحماية الكود من النسخ السهل
+            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'C' || e.key === 'J')) || (e.ctrlKey && e.key === 'U')) {
                 e.preventDefault();
                 return false;
             }
         });
 
-        (function() {
-            const trap = function() { setInterval(function() { debugger; }, 100); };
-            try { trap(); } catch (e) {}
-        })();
-
         document.addEventListener('copy', (e) => { e.preventDefault(); return false; });
         
+        // ضمان ثبات تخزين البيانات في المتصفح
         async function requestPersistentStorage() {
             if (navigator.storage && navigator.storage.persist) {
                 await navigator.storage.persist();
@@ -193,6 +93,7 @@
         }
         requestPersistentStorage();
 
+        // تفعيل الـ Service Worker لعمل التطبيق بدون إنترنت
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('service-worker.js')
