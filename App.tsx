@@ -3,20 +3,17 @@ import {
     Search, Plus, BarChart3, ShoppingCart, X, Trash2,
     CheckCircle2, TrendingUp, CreditCard, Wallet, UserMinus,
     ArrowRight, Minus, Edit3, Receipt, Calendar,
-    RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User
+    RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload
 } from 'lucide-react';
 import { db } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification } from './types';
-import { createClient } from '@supabase/supabase-js';
 
-// Supabase Configuration - قناة الاتصال مع سيرفر ألمانيا
-const SUPABASE_URL = 'https://cihficjizojbtnshwtfl.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_9Nmdm3LJUHK1fBF0ihj38g_ophBRHyD';
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Supabase Configuration has been moved to db.ts
 
 const App: React.FC = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('raha_pro_activated') === 'true');
     const [loginCode, setLoginCode] = useState('');
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const [view, setView] = useState<ViewType>('pos');
     const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -61,68 +58,6 @@ const App: React.FC = () => {
 
 
     const loadData = useCallback(async () => {
-        // Cloud Sync Engine - جلب البيانات من السحاب أولاً
-        try {
-            const { data: cloudMedicines, error: medError } = await supabase
-                .from('inventory')
-                .select('*');
-
-            const { data: cloudSales, error: salesError } = await supabase
-                .from('sales')
-                .select('*');
-
-            // إذا نجح الاتصال والبيانات ليست فارغة، نستخدم البيانات السحابية
-            if (!medError && cloudMedicines && cloudMedicines.length > 0) {
-                // تحويل بيانات السحاب إلى التنسيق المحلي
-                const syncedMedicines: Medicine[] = cloudMedicines.map((item: any) => ({
-                    id: item.id,
-                    name: item.name || '',
-                    barcode: item.barcode || '',
-                    price: item.price || 0,
-                    costPrice: item.cost_price || 0,
-                    stock: item.stock || 0,
-                    category: item.category || '',
-                    expiryDate: item.expiry_date || '2026-01-01',
-                    supplier: item.supplier || '',
-                    addedDate: item.added_date || new Date().toISOString().split('T')[0],
-                    usageCount: item.usage_count || 0
-                }));
-
-                // تحديث قاعدة البيانات المحلية
-                await db.medicines.clear();
-                await db.medicines.bulkAdd(syncedMedicines);
-                console.log('✅ تم مزامنة المخزون من السحاب');
-            }
-
-            if (!salesError && cloudSales && cloudSales.length > 0) {
-                // تحويل بيانات المبيعات
-                const syncedSales: Sale[] = cloudSales.map((item: any) => ({
-                    id: item.id,
-                    totalAmount: item.total_amount || 0,
-                    discount: item.discount || 0,
-                    netAmount: item.net_amount || 0,
-                    cashAmount: item.cash_amount || 0,
-                    bankAmount: item.bank_amount || 0,
-                    debtAmount: item.debt_amount || 0,
-                    bankTrxId: item.bank_trx_id || '',
-                    customerName: item.customer_name || '',
-                    totalCost: item.total_cost || 0,
-                    profit: item.profit || 0,
-                    timestamp: new Date(item.timestamp).getTime(),
-                    itemsJson: item.items_json || '[]',
-                    isReturned: item.is_returned || false
-                }));
-
-                await db.sales.clear();
-                await db.sales.bulkAdd(syncedSales);
-                console.log('✅ تم مزامنة المبيعات من السحاب');
-            }
-        } catch (syncError) {
-            // في حالة الفشل، نستمر في استخدام البيانات المحلية
-            console.log('⚠️ فشل الاتصال بالسحاب - استخدام البيانات المحلية:', syncError);
-        }
-
-        // جلب البيانات المحلية (بعد المزامنة أو في حالة الفشل)
         const [m, s, e, c, n] = await Promise.all([
             db.medicines.toArray(),
             db.sales.orderBy('timestamp').reverse().toArray(),
@@ -137,7 +72,21 @@ const App: React.FC = () => {
         setNotifs(n);
     }, []);
 
-    useEffect(() => { loadData(); }, [loadData]);
+    // Initial Load & Auth-Guard Sync (Raha Cloud Engine)
+    useEffect(() => {
+        if (isAuthenticated) {
+            const runInitialSync = async () => {
+                if (navigator.onLine) {
+                    setIsSyncing(true);
+                    const res = await db.fullSyncFromCloud();
+                    if (res.success) triggerNotif(`تم تحديث ${res.count} صنف من السحاب`, "info");
+                    setIsSyncing(false);
+                }
+                loadData();
+            };
+            runInitialSync();
+        }
+    }, [isAuthenticated, loadData, triggerNotif]);
 
     // Smart Business Health Analyzer - نظام التنبيهات الذكي
     const analyzeBusinessHealth = useCallback(async () => {
@@ -479,54 +428,6 @@ const App: React.FC = () => {
                     itemsJson: JSON.stringify(itemsArray)
                 });
             });
-
-
-            // Cloud Sync
-            const syncItems = itemsArray.map(item => ({
-                product_name: item.medicine.name,
-                price: item.medicine.price,
-                quantity: item.quantity
-            }));
-
-            const saleData = {
-                total_amount: cartTotalValue,
-                discount: parseFloat(payData.discount) || 0,
-                net_amount: netValue,
-                cash_amount: parseFloat(payData.cash) || 0,
-                bank_amount: parseFloat(payData.bank) || 0,
-                debt_amount: parseFloat(payData.debt) || 0,
-                bank_trx_id: payData.trx || null,
-                customer_name: payData.cust || null,
-                total_cost: totalCostValue,
-                profit: netValue - totalCostValue,
-                timestamp: new Date().toISOString(),
-                items_json: JSON.stringify(syncItems)
-            };
-
-            const { error: saleError } = await supabase.from('sales').insert([saleData]);
-            if (saleError) console.error('Cloud Sale Sync Failed:', saleError);
-
-            for (const item of itemsArray) {
-                const { error: inventoryError } = await supabase.rpc('decrement_inventory', {
-                    product_name: item.medicine.name,
-                    quantity_to_deduct: item.quantity
-                });
-
-                if (inventoryError) {
-                    const { data: inventoryItem } = await (supabase
-                        .from('inventory')
-                        .select('*')
-                        .eq('name', item.medicine.name)
-                        .maybeSingle() as any);
-
-                    if (inventoryItem) {
-                        await supabase
-                            .from('inventory')
-                            .update({ stock: inventoryItem.stock - item.quantity })
-                            .eq('name', item.medicine.name);
-                    }
-                }
-            }
         } catch (error) {
             console.error('Sale Execution Error:', error);
             triggerNotif("خطأ في تنفيذ العملية", "error");
@@ -614,7 +515,26 @@ const App: React.FC = () => {
                             {alerts.total > 0 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-[10px] flex items-center justify-center rounded-full font-black">{alerts.total}</span>}
                         </button>
                         <button onClick={backupData} className="p-2.5 bg-slate-50 text-slate-400 rounded-xl"><Download size={20} /></button>
-                        <label className="p-2.5 bg-slate-50 text-slate-400 rounded-xl cursor-pointer"><Upload size={20} /><input type="file" className="hidden" onChange={handleImport} accept=".json" /></label>
+                        <button
+                            disabled={isSyncing}
+                            onClick={async () => {
+                                if (confirm('هل أنت متأكد من مزامنة كافة البيانات من السحاب؟ سيتم استبدال البيانات المحلية.')) {
+                                    setIsSyncing(true);
+                                    const res = await db.fullSyncFromCloud();
+                                    if (res.success) {
+                                        triggerNotif(`تمت مزامنة ${res.count} صنف بنجاح`, "info");
+                                        await loadData();
+                                    } else {
+                                        triggerNotif(res.message || "فشل في المزامنة السحابية", "error");
+                                    }
+                                    setIsSyncing(false);
+                                }
+                            }}
+                            className={`p-2.5 rounded-xl transition-all ${isSyncing ? 'bg-blue-100 text-blue-400 animate-pulse' : 'bg-blue-50 text-blue-400'}`}
+                            title="مزامنة سحابية كاملة"
+                        >
+                            <CloudDownload size={20} className={isSyncing ? 'animate-bounce' : ''} />
+                        </button>
                         <button onClick={resetApp} className="p-2.5 bg-rose-50 text-rose-400 rounded-xl"><RotateCcw size={20} /></button>
                     </div>
                 </div>

@@ -1,75 +1,139 @@
-
 import { Dexie, type Table } from 'dexie';
 import { Medicine, Sale, Expense, Customer, AppNotification } from './types';
 import { createClient } from '@supabase/supabase-js';
 
-// تهيئة عميل Supabase باستخدام المتغيرات العالمية المعرفة في index.html
-const SUPABASE_URL = (window as any).SUPABASE_URL || '';
-const SUPABASE_KEY = (window as any).SUPABASE_KEY || '';
+// تهيئة عميل Supabase - قناة الاتصال مع سيرفر ألمانيا
+const SUPABASE_URL = 'https://cihficjizojbtnshwtfl.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_9Nmdm3LJUHK1fBF0ihj38g_ophBRHyD';
 
-export const supabase = (SUPABASE_URL && SUPABASE_KEY) 
-  ? createClient(SUPABASE_URL, SUPABASE_KEY) 
-  : null;
+export const supabase = (SUPABASE_URL && SUPABASE_KEY)
+    ? createClient(SUPABASE_URL, SUPABASE_KEY)
+    : null;
 
 export class RahaDB extends Dexie {
-  medicines!: Table<Medicine, number>;
-  sales!: Table<Sale, number>;
-  expenses!: Table<Expense, number>;
-  customers!: Table<Customer, number>;
-  notifications!: Table<AppNotification, number>;
+    medicines!: Table<Medicine, number>;
+    sales!: Table<Sale, number>;
+    expenses!: Table<Expense, number>;
+    customers!: Table<Customer, number>;
+    notifications!: Table<AppNotification, number>;
 
-  constructor() {
-    super('RahaDB');
-    
-    // الحفاظ على إصدار قاعدة البيانات وهيكلة الجداول كما هي
-    (this as any).version(8).stores({
-      medicines: '++id, name, barcode, category, supplier, addedDate, expiryDate, usageCount, lastSold',
-      sales: '++id, timestamp, customerName, isReturned',
-      expenses: '++id, timestamp, type',
-      customers: '++id, name',
-      notifications: '++id, timestamp'
-    });
+    constructor() {
+        super('RahaDB');
 
-    // إضافة خطافات التزامن السحابي (Cloud Sync Hooks)
-    // يتم استخدام setTimeout لضمان تنفيذ المزامنة بعد اكتمال المعاملة المحلية وتوفر المعرف (ID)
-    
-    this.medicines.hook('creating', (primKey, obj) => {
-      if (supabase) {
-        setTimeout(async () => {
-          try {
-            await supabase.from('medicines').upsert({ ...obj });
-          } catch (e) {
-            console.warn('Raha Cloud Sync: فشل مزامنة صنف جديد في جدول الأدوية', e);
-          }
-        }, 0);
-      }
-    });
+        // الفهرسة المتقدمة (الإصدار 8) لضمان سرعة البحث
+        this.version(8).stores({
+            medicines: '++id, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
+            sales: '++id, timestamp, customerName, isReturned',
+            expenses: '++id, timestamp, type',
+            customers: '++id, name',
+            notifications: '++id, timestamp'
+        });
 
-    this.sales.hook('creating', (primKey, obj) => {
-      if (supabase) {
-        setTimeout(async () => {
-          try {
-            await supabase.from('sales').upsert({ ...obj });
-          } catch (e) {
-            console.warn('Raha Cloud Sync: فشل مزامنة عملية بيع جديدة', e);
-          }
-        }, 0);
-      }
-    });
+        // --- المزامنة التلقائية (إرسال البيانات فوراً عند الإضافة أو التعديل) ---
 
-    // إضافة منطق التحديث لضمان دقة البيانات السحابية عند تعديل المخزون أو الأسعار
-    this.medicines.hook('updating', (mods, primKey, obj) => {
-      if (supabase) {
-        setTimeout(async () => {
-          try {
-            await supabase.from('medicines').upsert({ ...obj, ...mods });
-          } catch (e) {
-            console.warn('Raha Cloud Sync: فشل تحديث البيانات السحابية للأدوية', e);
-          }
-        }, 0);
-      }
-    });
-  }
+        // 1. مزامنة المخزون
+        this.medicines.hook('creating', (primKey, obj) => {
+            if (supabase) {
+                const cloudObj = {
+                    ...obj,
+                    cost_price: obj.costPrice,
+                    added_date: obj.addedDate,
+                    expiry_date: obj.expiryDate,
+                    usage_count: obj.usageCount
+                };
+                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+            }
+        });
+
+        this.medicines.hook('updating', (mods, primKey, obj) => {
+            if (supabase) {
+                const cloudObj = {
+                    ...obj,
+                    ...mods,
+                    cost_price: mods.costPrice || obj.costPrice,
+                    added_date: mods.addedDate || obj.addedDate,
+                    expiry_date: mods.expiryDate || obj.expiryDate,
+                    usage_count: mods.usageCount || obj.usageCount
+                };
+                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+            }
+        });
+
+        // 2. مزامنة المبيعات
+        this.sales.hook('creating', (primKey, obj) => {
+            if (supabase) {
+                const cloudObj = {
+                    total_amount: obj.totalAmount,
+                    discount: obj.discount,
+                    net_amount: obj.netAmount,
+                    cash_amount: obj.cashAmount,
+                    bank_amount: obj.bankAmount,
+                    debt_amount: obj.debtAmount,
+                    bank_trx_id: obj.bankTrxId,
+                    customer_name: obj.customerName,
+                    total_cost: obj.totalCost,
+                    profit: obj.profit,
+                    timestamp: new Date(obj.timestamp).toISOString(),
+                    items_json: obj.itemsJson,
+                    is_returned: obj.isReturned
+                };
+                setTimeout(() => supabase.from('sales').insert([cloudObj]).then(), 0);
+            }
+        });
+
+        // 3. مزامنة المنصرفات
+        this.expenses.hook('creating', (primKey, obj) => {
+            if (supabase) {
+                const cloudObj = {
+                    ...obj,
+                    timestamp: new Date(obj.timestamp).toISOString()
+                };
+                setTimeout(() => supabase.from('expenses').insert([cloudObj]).then(), 0);
+            }
+        });
+    }
+
+    /**
+     * دالة المزامنة الشاملة (Pull & Map): 
+     * تجلب البيانات من السحاب، تنظمها، وتعالج النقص في الحقول.
+     */
+    async fullSyncFromCloud() {
+        if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
+
+        try {
+            // جلب البيانات من جدول inventory
+            const { data, error } = await supabase.from('inventory').select('*');
+
+            if (error) throw error;
+
+            if (data) {
+                // تحويل البيانات (Mapping) لضمان عدم وجود حقول فارغة تسبب دمار الواجهة
+                const cleanedData: Medicine[] = data.map((item: any) => ({
+                    id: item.id,
+                    name: item.name || 'صنف غير معروف',
+                    barcode: item.barcode || '',
+                    price: Number(item.price) || 0,
+                    costPrice: Number(item.cost_price || item.costPrice) || 0,
+                    stock: Number(item.stock) || 0,
+                    category: item.category || 'عام',
+                    expiryDate: item.expiry_date || item.expiryDate || '',
+                    supplier: item.supplier || '',
+                    addedDate: item.added_date || item.addedDate || new Date().toISOString().split('T')[0],
+                    usageCount: item.usage_count || item.usageCount || 0
+                }));
+
+                // استخدام bulkPut لتحديث الموجود وإضافة الجديد
+                await this.medicines.bulkPut(cleanedData);
+
+                console.log('Raha Sync: تم تحديث المخزن بـ ' + cleanedData.length + ' صنف');
+                return { success: true, count: cleanedData.length };
+            }
+            return { success: false, message: 'لا توجد بيانات في السحاب' };
+        } catch (error) {
+            console.error('Raha Sync Error:', error);
+            return { success: false, error };
+        }
+    }
 }
 
 export const db = new RahaDB();
