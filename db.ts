@@ -39,7 +39,6 @@ export class RahaDB extends Dexie {
                 added_date: obj.addedDate,
                 usage_count: obj.usageCount || 0
             };
-            // استخدم upsert مع onConflict لمنع التضاعف
             setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
         });
 
@@ -60,7 +59,7 @@ export class RahaDB extends Dexie {
             setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
         });
 
-        // 2. مزامنة المبيعات: ربط الخصم من المخزون السحابي
+        // 2. مزامنة المبيعات
         this.sales.hook('creating', (primKey, obj) => {
             const cloudObj = {
                 timestamp: obj.timestamp,
@@ -72,14 +71,11 @@ export class RahaDB extends Dexie {
             };
             
             setTimeout(async () => {
-                // إرسال البيعية
                 await supabase.from('sales').insert([cloudObj]);
                 
-                // تحديث المخزون في السحاب لكل صنف تم بيعه
                 if (obj.itemsJson) {
                     const items = typeof obj.itemsJson === 'string' ? JSON.parse(obj.itemsJson) : obj.itemsJson;
                     for (const item of items) {
-                        // جلب الكمية الحالية من السحاب ثم طرح المباع
                         const { data } = await supabase.from('medicines').select('stock').eq('barcode', item.barcode).single();
                         if (data) {
                             const newStock = data.stock - item.quantity;
@@ -89,7 +85,7 @@ export class RahaDB extends Dexie {
                 }
             }, 0);
         });
-    }
+    } // نهاية الـ Constructor
 
     async fullSyncFromCloud() {
         try {
@@ -98,7 +94,9 @@ export class RahaDB extends Dexie {
 
             if (data && data.length > 0) {
                 for (const item of data) {
-                    await this.medicines.put({
+                    const existing = await this.medicines.where('barcode').equals(item.barcode).first();
+                    
+                    const medicineData = {
                         name: item.name,
                         barcode: item.barcode,
                         price: Number(item.price) || 0,
@@ -109,7 +107,13 @@ export class RahaDB extends Dexie {
                         supplier: item.supplier,
                         addedDate: item.added_date,
                         usageCount: item.usage_count || 0
-                    });
+                    };
+
+                    if (existing) {
+                        await this.medicines.update(existing.id!, medicineData);
+                    } else {
+                        await this.medicines.add(medicineData);
+                    }
                 }
                 return { success: true, count: data.length };
             }
@@ -119,6 +123,6 @@ export class RahaDB extends Dexie {
             return { success: false, error };
         }
     }
-}
+} // <--- هذا القوس كان مفقوداً لإغلاق الـ Class
 
 export const db = new RahaDB();
