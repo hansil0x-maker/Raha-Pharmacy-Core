@@ -59,7 +59,7 @@ export class RahaDB extends Dexie {
             setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
         });
 
-        // 2. مزامنة المبيعات: (الإضافة الجديدة لمعالجة المرتجعات)
+        // 2. مزامنة المبيعات (مع المرتجعات)
         this.sales.hook('creating', (primKey, obj) => {
             const cloudObj = {
                 timestamp: obj.timestamp,
@@ -86,7 +86,6 @@ export class RahaDB extends Dexie {
             }, 0);
         });
 
-        // الجراحة هنا: مراقبة تحديث الفاتورة (عند الضغط على "إرجاع")
         this.sales.hook('updating', (mods, primKey, obj) => {
             const updated = { ...obj, ...mods };
             const cloudObj = {
@@ -97,11 +96,22 @@ export class RahaDB extends Dexie {
                 customer_name: updated.customerName,
                 is_returned: updated.isReturned
             };
-            // تحديث السحاب فوراً بحالة الإرجاع الجديدة
             setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
+        });
+
+        // 3. (الإضافة الجديدة) مزامنة المنصرفات فور إنشائها
+        this.expenses.hook('creating', (primKey, obj) => {
+            const cloudObj = {
+                timestamp: obj.timestamp,
+                amount: obj.amount,
+                description: obj.description, // التفاصيل والملاحظات
+                category: obj.category        // نوع المصروف
+            };
+            setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
         });
     }
 
+    // دالة المزامنة الشاملة
     async fullSyncFromCloud() {
         try {
             // أ. مزامنة الأدوية
@@ -110,31 +120,51 @@ export class RahaDB extends Dexie {
                 for (const item of medsData) {
                     const existing = await this.medicines.where('barcode').equals(item.barcode).first();
                     const medObj = {
-                        name: item.name, barcode: item.barcode, price: Number(item.price),
-                        costPrice: Number(item.cost_price), stock: Number(item.stock),
+                        name: item.name, barcode: item.barcode, 
+                        price: Number(item.price) || 0,
+                        costPrice: Number(item.cost_price) || 0, 
+                        stock: Number(item.stock) || 0,
                         category: item.category, expiryDate: item.expiry_date,
-                        supplier: item.supplier, addedDate: item.added_date, usageCount: item.usage_count
+                        supplier: item.supplier, addedDate: item.added_date, usageCount: item.usage_count || 0
                     };
                     if (existing) await this.medicines.update(existing.id!, medObj);
                     else await this.medicines.add(medObj);
                 }
             }
 
-            // ب. الجراحة هنا: مزامنة المبيعات (التقارير) لضمان تطابق حالة الإرجاع
+            // ب. مزامنة المبيعات (مع إصلاح الأصفار وحالة الإرجاع)
             const { data: salesData } = await supabase.from('sales').select('*');
             if (salesData) {
                 for (const s of salesData) {
                     const existingSale = await this.sales.where('timestamp').equals(s.timestamp).first();
                     const saleObj = {
                         timestamp: s.timestamp,
-                        totalAmount: Number(s.total_amount),
-                        profit: Number(s.profit),
-                        itemsJson: JSON.parse(s.items_json),
+                        totalAmount: Number(s.total_amount) || 0, // الحماية من الصفر
+                        profit: Number(s.profit) || 0,             // الحماية من الصفر
+                        itemsJson: typeof s.items_json === 'string' ? JSON.parse(s.items_json) : s.items_json,
                         customerName: s.customer_name,
-                        isReturned: s.is_returned
+                        isReturned: s.is_returned || false
                     };
                     if (existingSale) await this.sales.update(existingSale.id!, saleObj);
                     else await this.sales.add(saleObj);
+                }
+            }
+
+            // ج. (الإضافة الجديدة) مزامنة المنصرفات من السحاب بكل التفاصيل
+            const { data: expData } = await supabase.from('expenses').select('*');
+            if (expData) {
+                for (const e of expData) {
+                    const existingExp = await this.expenses.where('timestamp').equals(e.timestamp).first();
+                    // هنا يتم جلب كافة التفاصيل: المبلغ، الوصف، والنوع
+                    const expObj = {
+                        timestamp: e.timestamp,
+                        amount: Number(e.amount) || 0, // الحماية من الصفر
+                        description: e.description,
+                        category: e.category
+                    };
+                    if (!existingExp) {
+                        await this.expenses.add(expObj);
+                    }
                 }
             }
 
