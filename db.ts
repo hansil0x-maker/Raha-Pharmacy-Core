@@ -25,7 +25,7 @@ export class RahaDB extends Dexie {
             notifications: '++id, timestamp'
         });
 
-        // 1. مزامنة الأدوية: استخدام upsert بناءً على الباركود لمنع التكرار
+        // 1. مزامنة الأدوية (إضافة وتعديل)
         this.medicines.hook('creating', (primKey, obj) => {
             const cloudObj = {
                 name: obj.name,
@@ -59,7 +59,7 @@ export class RahaDB extends Dexie {
             setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
         });
 
-        // 2. مزامنة المبيعات
+        // 2. مزامنة المبيعات: (الإضافة الجديدة لمعالجة المرتجعات)
         this.sales.hook('creating', (primKey, obj) => {
             const cloudObj = {
                 timestamp: obj.timestamp,
@@ -71,7 +71,7 @@ export class RahaDB extends Dexie {
             };
             
             setTimeout(async () => {
-                await supabase.from('sales').insert([cloudObj]);
+                await supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' });
                 
                 if (obj.itemsJson) {
                     const items = typeof obj.itemsJson === 'string' ? JSON.parse(obj.itemsJson) : obj.itemsJson;
@@ -85,44 +85,65 @@ export class RahaDB extends Dexie {
                 }
             }, 0);
         });
-    } // نهاية الـ Constructor
+
+        // الجراحة هنا: مراقبة تحديث الفاتورة (عند الضغط على "إرجاع")
+        this.sales.hook('updating', (mods, primKey, obj) => {
+            const updated = { ...obj, ...mods };
+            const cloudObj = {
+                timestamp: updated.timestamp,
+                total_amount: updated.totalAmount,
+                profit: updated.profit,
+                items_json: typeof updated.itemsJson === 'string' ? updated.itemsJson : JSON.stringify(updated.itemsJson),
+                customer_name: updated.customerName,
+                is_returned: updated.isReturned
+            };
+            // تحديث السحاب فوراً بحالة الإرجاع الجديدة
+            setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
+        });
+    }
 
     async fullSyncFromCloud() {
         try {
-            const { data, error } = await supabase.from('medicines').select('*');
-            if (error) throw error;
-
-            if (data && data.length > 0) {
-                for (const item of data) {
+            // أ. مزامنة الأدوية
+            const { data: medsData } = await supabase.from('medicines').select('*');
+            if (medsData) {
+                for (const item of medsData) {
                     const existing = await this.medicines.where('barcode').equals(item.barcode).first();
-                    
-                    const medicineData = {
-                        name: item.name,
-                        barcode: item.barcode,
-                        price: Number(item.price) || 0,
-                        costPrice: Number(item.cost_price) || 0,
-                        stock: Number(item.stock) || 0,
-                        category: item.category,
-                        expiryDate: item.expiry_date,
-                        supplier: item.supplier,
-                        addedDate: item.added_date,
-                        usageCount: item.usage_count || 0
+                    const medObj = {
+                        name: item.name, barcode: item.barcode, price: Number(item.price),
+                        costPrice: Number(item.cost_price), stock: Number(item.stock),
+                        category: item.category, expiryDate: item.expiry_date,
+                        supplier: item.supplier, addedDate: item.added_date, usageCount: item.usage_count
                     };
-
-                    if (existing) {
-                        await this.medicines.update(existing.id!, medicineData);
-                    } else {
-                        await this.medicines.add(medicineData);
-                    }
+                    if (existing) await this.medicines.update(existing.id!, medObj);
+                    else await this.medicines.add(medObj);
                 }
-                return { success: true, count: data.length };
             }
-            return { success: false, message: 'لا توجد بيانات' };
+
+            // ب. الجراحة هنا: مزامنة المبيعات (التقارير) لضمان تطابق حالة الإرجاع
+            const { data: salesData } = await supabase.from('sales').select('*');
+            if (salesData) {
+                for (const s of salesData) {
+                    const existingSale = await this.sales.where('timestamp').equals(s.timestamp).first();
+                    const saleObj = {
+                        timestamp: s.timestamp,
+                        totalAmount: Number(s.total_amount),
+                        profit: Number(s.profit),
+                        itemsJson: JSON.parse(s.items_json),
+                        customerName: s.customer_name,
+                        isReturned: s.is_returned
+                    };
+                    if (existingSale) await this.sales.update(existingSale.id!, saleObj);
+                    else await this.sales.add(saleObj);
+                }
+            }
+
+            return { success: true };
         } catch (error) {
             console.error('Sync Error:', error);
             return { success: false, error };
         }
     }
-} // <--- هذا القوس كان مفقوداً لإغلاق الـ Class
+}
 
 export const db = new RahaDB();
