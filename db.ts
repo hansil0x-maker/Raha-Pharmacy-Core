@@ -35,27 +35,37 @@ export class RahaDB extends Dexie {
         this.medicines.hook('creating', (primKey, obj) => {
             if (supabase) {
                 const cloudObj = {
-                    ...obj,
+                    name: obj.name,
+                    barcode: obj.barcode,
+                    price: obj.price,
                     cost_price: obj.costPrice,
-                    added_date: obj.addedDate,
+                    stock: obj.stock,
+                    category: obj.category,
                     expiry_date: obj.expiryDate,
-                    usage_count: obj.usageCount
+                    supplier: obj.supplier,
+                    added_date: obj.addedDate,
+                    usage_count: obj.usageCount || 0
                 };
-                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(({ error }) => error && console.error('Supabase Inventory Error:', error)), 0);
             }
         });
 
         this.medicines.hook('updating', (mods, primKey, obj) => {
             if (supabase) {
+                const updated = { ...obj, ...mods };
                 const cloudObj = {
-                    ...obj,
-                    ...mods,
-                    cost_price: mods.costPrice || obj.costPrice,
-                    added_date: mods.addedDate || obj.addedDate,
-                    expiry_date: mods.expiryDate || obj.expiryDate,
-                    usage_count: mods.usageCount || obj.usageCount
+                    name: updated.name,
+                    barcode: updated.barcode,
+                    price: updated.price,
+                    cost_price: updated.costPrice,
+                    stock: updated.stock,
+                    category: updated.category,
+                    expiry_date: updated.expiryDate,
+                    supplier: updated.supplier,
+                    added_date: updated.addedDate,
+                    usage_count: updated.usageCount || 0
                 };
-                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(({ error }) => error && console.error('Supabase Inventory Update Error:', error)), 0);
             }
         });
 
@@ -73,11 +83,11 @@ export class RahaDB extends Dexie {
                     customer_name: obj.customerName,
                     total_cost: obj.totalCost,
                     profit: obj.profit,
-                    timestamp: obj.timestamp, // ارسله كرقم Unix ليتوافق مع BIGINT
+                    timestamp: obj.timestamp, // Unix Timestamp
                     items_json: obj.itemsJson,
                     is_returned: obj.isReturned
                 };
-                setTimeout(() => supabase.from('sales').insert([cloudObj]).then(), 0);
+                setTimeout(() => supabase.from('sales').insert([cloudObj]).then(({ error }) => error && console.error('Supabase Sales Error:', error)), 0);
             }
         });
 
@@ -88,9 +98,9 @@ export class RahaDB extends Dexie {
                     timestamp: obj.timestamp,
                     amount: obj.amount,
                     description: obj.description,
-                    type: obj.type // تأكد من استخدام الحقل الصحيح
+                    type: obj.type
                 };
-                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Expense Error:', error)), 0);
             }
         });
     }
@@ -103,27 +113,29 @@ export class RahaDB extends Dexie {
         if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
 
         try {
-            // 1. مزامنة المخزون
-            const { data: invData } = await supabase.from('inventory').select('*');
+            // 1. مزامنة المخزون (استخدام جدول medicines)
+            const { data: invData, error: invErr } = await supabase.from('medicines').select('*');
+            if (invErr) console.error('Cloud Sync Error (Inventory):', invErr);
             if (invData) {
                 const cleanedInv: Medicine[] = invData.map((item: any) => ({
                     id: item.id,
                     name: item.name || 'صنف غير معروف',
                     barcode: item.barcode || '',
                     price: Number(item.price) || 0,
-                    costPrice: Number(item.cost_price || item.costPrice) || 0,
+                    costPrice: Number(item.cost_price) || 0,
                     stock: Number(item.stock) || 0,
                     category: item.category || 'عام',
-                    expiryDate: item.expiry_date || item.expiryDate || '',
+                    expiryDate: item.expiry_date || '',
                     supplier: item.supplier || '',
-                    addedDate: item.added_date || item.addedDate || new Date().toISOString().split('T')[0],
-                    usageCount: item.usage_count || item.usageCount || 0
+                    addedDate: item.added_date || new Date().toISOString().split('T')[0],
+                    usageCount: item.usage_count || 0
                 }));
                 await this.medicines.bulkPut(cleanedInv);
             }
 
             // 2. مزامنة المبيعات (إصلاح مشكلة الأصفار)
-            const { data: salesData } = await supabase.from('sales').select('*');
+            const { data: salesData, error: salesErr } = await supabase.from('sales').select('*');
+            if (salesErr) console.error('Cloud Sync Error (Sales):', salesErr);
             if (salesData) {
                 const cleanedSales: Sale[] = salesData.map((s: any) => ({
                     timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp),
@@ -144,7 +156,8 @@ export class RahaDB extends Dexie {
             }
 
             // 3. مزامنة المنصرفات
-            const { data: expData } = await supabase.from('expenses').select('*');
+            const { data: expData, error: expErr } = await supabase.from('expenses').select('*');
+            if (expErr) console.error('Cloud Sync Error (Expenses):', expErr);
             if (expData) {
                 const cleanedExp: Expense[] = expData.map((e: any) => ({
                     timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp),
@@ -157,7 +170,7 @@ export class RahaDB extends Dexie {
 
             return { success: true, count: invData?.length || 0 };
         } catch (error) {
-            console.error('Raha Sync Error:', error);
+            console.error('Raha Sync Overall Error:', error);
             return { success: false, error };
         }
     }
