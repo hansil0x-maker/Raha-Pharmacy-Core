@@ -2,10 +2,13 @@ import { Dexie, type Table } from 'dexie';
 import { Medicine, Sale, Expense, Customer, AppNotification } from './types';
 import { createClient } from '@supabase/supabase-js';
 
+// تهيئة عميل Supabase - قناة الاتصال مع سيرفر ألمانيا
 const SUPABASE_URL = 'https://cihficjizojbtnshwtfl.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpaGZpY2ppem9qYnRuc2h3dGZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwOTEyMDQsImV4cCI6MjA4NDY2NzIwNH0.lta6_WMeXAdvJhZKJd4e-9tSxoZX9DOvuoCPkuSWpO8';
+const SUPABASE_KEY = 'sb_publishable_9Nmdm3LJUHK1fBF0ihj38g_ophBRHyD';
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+export const supabase = (SUPABASE_URL && SUPABASE_KEY)
+    ? createClient(SUPABASE_URL, SUPABASE_KEY)
+    : null;
 
 export class RahaDB extends Dexie {
     medicines!: Table<Medicine, number>;
@@ -17,160 +20,144 @@ export class RahaDB extends Dexie {
     constructor() {
         super('RahaDB');
 
+        // الفهرسة المتقدمة (الإصدار 8) لضمان سرعة البحث
         this.version(8).stores({
-            medicines: '++id, &barcode, name, category, supplier',
-            sales: '++id, timestamp, customerName',
-            expenses: '++id, timestamp',
+            medicines: '++id, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
+            sales: '++id, timestamp, customerName, isReturned',
+            expenses: '++id, timestamp, type',
             customers: '++id, name',
             notifications: '++id, timestamp'
         });
 
-        // 1. مزامنة الأدوية (إضافة وتعديل)
+        // --- المزامنة التلقائية (إرسال البيانات فوراً عند الإضافة أو التعديل) ---
+
+        // 1. مزامنة المخزون
         this.medicines.hook('creating', (primKey, obj) => {
-            const cloudObj = {
-                name: obj.name,
-                barcode: obj.barcode,
-                price: obj.price,
-                cost_price: obj.costPrice,
-                stock: obj.stock,
-                category: obj.category,
-                expiry_date: obj.expiryDate,
-                supplier: obj.supplier,
-                added_date: obj.addedDate,
-                usage_count: obj.usageCount || 0
-            };
-            setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
+            if (supabase) {
+                const cloudObj = {
+                    ...obj,
+                    cost_price: obj.costPrice,
+                    added_date: obj.addedDate,
+                    expiry_date: obj.expiryDate,
+                    usage_count: obj.usageCount
+                };
+                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+            }
         });
 
         this.medicines.hook('updating', (mods, primKey, obj) => {
-            const updated = { ...obj, ...mods };
-            const cloudObj = {
-                name: updated.name,
-                barcode: updated.barcode,
-                price: updated.price,
-                cost_price: updated.costPrice,
-                stock: updated.stock,
-                category: updated.category,
-                expiry_date: updated.expiry_date || updated.expiryDate,
-                supplier: updated.supplier,
-                added_date: updated.added_date || updated.addedDate,
-                usage_count: updated.usageCount || 0
-            };
-            setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(), 0);
+            if (supabase) {
+                const cloudObj = {
+                    ...obj,
+                    ...mods,
+                    cost_price: mods.costPrice || obj.costPrice,
+                    added_date: mods.addedDate || obj.addedDate,
+                    expiry_date: mods.expiryDate || obj.expiryDate,
+                    usage_count: mods.usageCount || obj.usageCount
+                };
+                setTimeout(() => supabase.from('inventory').upsert(cloudObj).then(), 0);
+            }
         });
 
-        // 2. مزامنة المبيعات (مع المرتجعات)
+        // 2. مزامنة المبيعات
         this.sales.hook('creating', (primKey, obj) => {
-            const cloudObj = {
-                timestamp: obj.timestamp,
-                total_amount: obj.totalAmount,
-                profit: obj.profit,
-                items_json: JSON.stringify(obj.itemsJson),
-                customer_name: obj.customerName,
-                is_returned: obj.isReturned || false
-            };
-            
-            setTimeout(async () => {
-                await supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' });
-                
-                if (obj.itemsJson) {
-                    const items = typeof obj.itemsJson === 'string' ? JSON.parse(obj.itemsJson) : obj.itemsJson;
-                    for (const item of items) {
-                        const { data } = await supabase.from('medicines').select('stock').eq('barcode', item.barcode).single();
-                        if (data) {
-                            const newStock = data.stock - item.quantity;
-                            await supabase.from('medicines').update({ stock: newStock }).eq('barcode', item.barcode);
-                        }
-                    }
-                }
-            }, 0);
+            if (supabase) {
+                const cloudObj = {
+                    total_amount: obj.totalAmount,
+                    discount: obj.discount,
+                    net_amount: obj.netAmount,
+                    cash_amount: obj.cashAmount,
+                    bank_amount: obj.bankAmount,
+                    debt_amount: obj.debtAmount,
+                    bank_trx_id: obj.bankTrxId,
+                    customer_name: obj.customerName,
+                    total_cost: obj.totalCost,
+                    profit: obj.profit,
+                    timestamp: obj.timestamp, // ارسله كرقم Unix ليتوافق مع BIGINT
+                    items_json: obj.itemsJson,
+                    is_returned: obj.isReturned
+                };
+                setTimeout(() => supabase.from('sales').insert([cloudObj]).then(), 0);
+            }
         });
 
-        this.sales.hook('updating', (mods, primKey, obj) => {
-            const updated = { ...obj, ...mods };
-            const cloudObj = {
-                timestamp: updated.timestamp,
-                total_amount: updated.totalAmount,
-                profit: updated.profit,
-                items_json: typeof updated.itemsJson === 'string' ? updated.itemsJson : JSON.stringify(updated.itemsJson),
-                customer_name: updated.customerName,
-                is_returned: updated.isReturned
-            };
-            setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
-        });
-
-        // 3. (الإضافة الجديدة) مزامنة المنصرفات فور إنشائها
+        // 3. مزامنة المنصرفات
         this.expenses.hook('creating', (primKey, obj) => {
-            const cloudObj = {
-                timestamp: obj.timestamp,
-                amount: obj.amount,
-                description: obj.description, // التفاصيل والملاحظات
-                category: obj.category        // نوع المصروف
-            };
-            setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
+            if (supabase) {
+                const cloudObj = {
+                    timestamp: obj.timestamp,
+                    amount: obj.amount,
+                    description: obj.description,
+                    type: obj.type // تأكد من استخدام الحقل الصحيح
+                };
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(), 0);
+            }
         });
     }
 
-    // دالة المزامنة الشاملة
+    /**
+     * دالة المزامنة الشاملة (Pull & Map): 
+     * تجلب البيانات من السحاب، تنظمها، وتعالج النقص في الحقول.
+     */
     async fullSyncFromCloud() {
+        if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
+
         try {
-            // أ. مزامنة الأدوية
-            const { data: medsData } = await supabase.from('medicines').select('*');
-            if (medsData) {
-                for (const item of medsData) {
-                    const existing = await this.medicines.where('barcode').equals(item.barcode).first();
-                    const medObj = {
-                        name: item.name, barcode: item.barcode, 
-                        price: Number(item.price) || 0,
-                        costPrice: Number(item.cost_price) || 0, 
-                        stock: Number(item.stock) || 0,
-                        category: item.category, expiryDate: item.expiry_date,
-                        supplier: item.supplier, addedDate: item.added_date, usageCount: item.usage_count || 0
-                    };
-                    if (existing) await this.medicines.update(existing.id!, medObj);
-                    else await this.medicines.add(medObj);
-                }
+            // 1. مزامنة المخزون
+            const { data: invData } = await supabase.from('inventory').select('*');
+            if (invData) {
+                const cleanedInv: Medicine[] = invData.map((item: any) => ({
+                    id: item.id,
+                    name: item.name || 'صنف غير معروف',
+                    barcode: item.barcode || '',
+                    price: Number(item.price) || 0,
+                    costPrice: Number(item.cost_price || item.costPrice) || 0,
+                    stock: Number(item.stock) || 0,
+                    category: item.category || 'عام',
+                    expiryDate: item.expiry_date || item.expiryDate || '',
+                    supplier: item.supplier || '',
+                    addedDate: item.added_date || item.addedDate || new Date().toISOString().split('T')[0],
+                    usageCount: item.usage_count || item.usageCount || 0
+                }));
+                await this.medicines.bulkPut(cleanedInv);
             }
 
-            // ب. مزامنة المبيعات (مع إصلاح الأصفار وحالة الإرجاع)
+            // 2. مزامنة المبيعات (إصلاح مشكلة الأصفار)
             const { data: salesData } = await supabase.from('sales').select('*');
             if (salesData) {
-                for (const s of salesData) {
-                    const existingSale = await this.sales.where('timestamp').equals(s.timestamp).first();
-                    const saleObj = {
-                        timestamp: s.timestamp,
-                        totalAmount: Number(s.total_amount) || 0, // الحماية من الصفر
-                        profit: Number(s.profit) || 0,             // الحماية من الصفر
-                        itemsJson: typeof s.items_json === 'string' ? JSON.parse(s.items_json) : s.items_json,
-                        customerName: s.customer_name,
-                        isReturned: s.is_returned || false
-                    };
-                    if (existingSale) await this.sales.update(existingSale.id!, saleObj);
-                    else await this.sales.add(saleObj);
-                }
+                const cleanedSales: Sale[] = salesData.map((s: any) => ({
+                    timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp),
+                    totalAmount: Number(s.total_amount) || 0,
+                    discount: Number(s.discount) || 0,
+                    netAmount: Number(s.net_amount) || 0,
+                    cashAmount: Number(s.cash_amount) || 0,
+                    bankAmount: Number(s.bank_amount) || 0,
+                    debtAmount: Number(s.debt_amount) || 0,
+                    bankTrxId: s.bank_trx_id || '',
+                    customerName: s.customer_name || 'زبون عام',
+                    totalCost: Number(s.total_cost) || 0,
+                    profit: Number(s.profit) || 0,
+                    itemsJson: typeof s.items_json === 'string' ? s.items_json : JSON.stringify(s.items_json),
+                    isReturned: s.is_returned || false
+                }));
+                await this.sales.bulkPut(cleanedSales);
             }
 
-            // ج. (الإضافة الجديدة) مزامنة المنصرفات من السحاب بكل التفاصيل
+            // 3. مزامنة المنصرفات
             const { data: expData } = await supabase.from('expenses').select('*');
             if (expData) {
-                for (const e of expData) {
-                    const existingExp = await this.expenses.where('timestamp').equals(e.timestamp).first();
-                    // هنا يتم جلب كافة التفاصيل: المبلغ، الوصف، والنوع
-                    const expObj = {
-                        timestamp: e.timestamp,
-                        amount: Number(e.amount) || 0, // الحماية من الصفر
-                        description: e.description,
-                        category: e.category
-                    };
-                    if (!existingExp) {
-                        await this.expenses.add(expObj);
-                    }
-                }
+                const cleanedExp: Expense[] = expData.map((e: any) => ({
+                    timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp),
+                    amount: Number(e.amount) || 0,
+                    description: e.description || '',
+                    type: e.type || 'عام'
+                }));
+                await this.expenses.bulkPut(cleanedExp);
             }
 
-            return { success: true };
+            return { success: true, count: invData?.length || 0 };
         } catch (error) {
-            console.error('Sync Error:', error);
+            console.error('Raha Sync Error:', error);
             return { success: false, error };
         }
     }
