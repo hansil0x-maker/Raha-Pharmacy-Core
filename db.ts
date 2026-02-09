@@ -93,6 +93,34 @@ export class RahaDB extends Dexie {
             }
         });
 
+        this.sales.hook('updating', (mods, primKey, obj) => {
+            if (supabase) {
+                const updated = { ...obj, ...mods };
+                const cloudObj = {
+                    timestamp: updated.timestamp,
+                    total_amount: updated.totalAmount,
+                    discount: updated.discount,
+                    net_amount: updated.netAmount,
+                    cash_amount: updated.cashAmount,
+                    bank_amount: updated.bankAmount,
+                    debt_amount: updated.debtAmount,
+                    bank_trx_id: updated.bankTrxId || '',
+                    customer_name: updated.customerName || '',
+                    total_cost: updated.totalCost,
+                    profit: updated.profit,
+                    items_json: updated.itemsJson,
+                    is_returned: updated.isReturned
+                };
+                setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Sales Update Error:', error)), 0);
+            }
+        });
+
+        this.sales.hook('deleting', (primKey, obj) => {
+            if (supabase) {
+                setTimeout(() => supabase.from('sales').delete().eq('timestamp', obj.timestamp).then(({ error }) => error && console.error('Supabase Sales Delete Error:', error)), 0);
+            }
+        });
+
         // 3. مزامنة المنصرفات (Mirror Push - Complete Fields)
         this.expenses.hook('creating', (primKey, obj) => {
             if (supabase) {
@@ -103,6 +131,32 @@ export class RahaDB extends Dexie {
                     type: obj.type
                 };
                 setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Expense Error:', error)), 0);
+            }
+        });
+
+        this.expenses.hook('updating', (mods, primKey, obj) => {
+            if (supabase) {
+                const updated = { ...obj, ...mods };
+                const cloudObj = {
+                    timestamp: updated.timestamp,
+                    amount: updated.amount,
+                    description: updated.description || '',
+                    type: updated.type
+                };
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Expense Update Error:', error)), 0);
+            }
+        });
+
+        this.expenses.hook('deleting', (primKey, obj) => {
+            if (supabase) {
+                setTimeout(() => supabase.from('expenses').delete().eq('timestamp', obj.timestamp).then(({ error }) => error && console.error('Supabase Expense Delete Error:', error)), 0);
+            }
+        });
+
+        // 4. حذف المخزون (Inventory Deletion Hook)
+        this.medicines.hook('deleting', (primKey, obj) => {
+            if (supabase) {
+                setTimeout(() => supabase.from('medicines').delete().eq('barcode', obj.barcode).then(({ error }) => error && console.error('Supabase Inventory Delete Error:', error)), 0);
             }
         });
     }
