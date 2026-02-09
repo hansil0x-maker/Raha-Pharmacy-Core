@@ -31,7 +31,7 @@ export class RahaDB extends Dexie {
 
         // --- المزامنة التلقائية (إرسال البيانات فوراً عند الإضافة أو التعديل) ---
 
-        // 1. مزامنة المخزون
+        // 1. مزامنة المخزون (Mirror Push)
         this.medicines.hook('creating', (primKey, obj) => {
             if (supabase) {
                 const cloudObj = {
@@ -42,9 +42,10 @@ export class RahaDB extends Dexie {
                     stock: obj.stock,
                     category: obj.category,
                     expiry_date: obj.expiryDate,
-                    supplier: obj.supplier,
-                    added_date: obj.addedDate,
-                    usage_count: obj.usageCount || 0
+                    supplier: obj.supplier || '',
+                    added_date: obj.addedDate || '',
+                    usage_count: obj.usageCount || 0,
+                    last_sold: obj.lastSold || null
                 };
                 setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(({ error }) => error && console.error('Supabase Inventory Error:', error)), 0);
             }
@@ -61,43 +62,44 @@ export class RahaDB extends Dexie {
                     stock: updated.stock,
                     category: updated.category,
                     expiry_date: updated.expiryDate,
-                    supplier: updated.supplier,
-                    added_date: updated.addedDate,
-                    usage_count: updated.usageCount || 0
+                    supplier: updated.supplier || '',
+                    added_date: updated.addedDate || '',
+                    usage_count: updated.usageCount || 0,
+                    last_sold: updated.lastSold || null
                 };
                 setTimeout(() => supabase.from('medicines').upsert(cloudObj, { onConflict: 'barcode' }).then(({ error }) => error && console.error('Supabase Inventory Update Error:', error)), 0);
             }
         });
 
-        // 2. مزامنة المبيعات
+        // 2. مزامنة المبيعات (Mirror Push - All Financial Fields)
         this.sales.hook('creating', (primKey, obj) => {
             if (supabase) {
                 const cloudObj = {
+                    timestamp: obj.timestamp,
                     total_amount: obj.totalAmount,
                     discount: obj.discount,
                     net_amount: obj.netAmount,
                     cash_amount: obj.cashAmount,
                     bank_amount: obj.bankAmount,
                     debt_amount: obj.debtAmount,
-                    bank_trx_id: obj.bankTrxId,
-                    customer_name: obj.customerName,
+                    bank_trx_id: obj.bankTrxId || '',
+                    customer_name: obj.customerName || '',
                     total_cost: obj.totalCost,
                     profit: obj.profit,
-                    timestamp: obj.timestamp, // Unix Timestamp
                     items_json: obj.itemsJson,
                     is_returned: obj.isReturned
                 };
-                setTimeout(() => supabase.from('sales').insert([cloudObj]).then(({ error }) => error && console.error('Supabase Sales Error:', error)), 0);
+                setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Sales Error:', error)), 0);
             }
         });
 
-        // 3. مزامنة المنصرفات
+        // 3. مزامنة المنصرفات (Mirror Push - Complete Fields)
         this.expenses.hook('creating', (primKey, obj) => {
             if (supabase) {
                 const cloudObj = {
                     timestamp: obj.timestamp,
                     amount: obj.amount,
-                    description: obj.description,
+                    description: obj.description || '',
                     type: obj.type
                 };
                 setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Supabase Expense Error:', error)), 0);
@@ -106,8 +108,9 @@ export class RahaDB extends Dexie {
     }
 
     /**
-     * دالة المزامنة الشاملة (Pull & Map): 
-     * تجلب البيانات من السحاب، تنظمها، وتعالج النقص في الحقول.
+     * دالة المزامنة الشاملة (Pull & Map - Mirror Logic): 
+     * تجلب البيانات من السحاب، تحولها لكائنات محلية دقيقة، وتعالج النقص في الحقول.
+     * الهدف: السحاب هو المصدر الوحيد للحقيقة.
      */
     async fullSyncFromCloud() {
         if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
@@ -128,17 +131,18 @@ export class RahaDB extends Dexie {
                     expiryDate: item.expiry_date || '',
                     supplier: item.supplier || '',
                     addedDate: item.added_date || new Date().toISOString().split('T')[0],
-                    usageCount: item.usage_count || 0
+                    usageCount: item.usage_count || 0,
+                    lastSold: item.last_sold || undefined
                 }));
                 await this.medicines.bulkPut(cleanedInv);
             }
 
-            // 2. مزامنة المبيعات (إصلاح مشكلة الأصفار)
+            // 2. مزامنة المبيعات (إرسال واستقبال كامل للتفاصيل المالية)
             const { data: salesData, error: salesErr } = await supabase.from('sales').select('*');
             if (salesErr) console.error('Cloud Sync Error (Sales):', salesErr);
             if (salesData) {
                 const cleanedSales: Sale[] = salesData.map((s: any) => ({
-                    timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp),
+                    timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp || 0),
                     totalAmount: Number(s.total_amount) || 0,
                     discount: Number(s.discount) || 0,
                     netAmount: Number(s.net_amount) || 0,
@@ -149,18 +153,18 @@ export class RahaDB extends Dexie {
                     customerName: s.customer_name || 'زبون عام',
                     totalCost: Number(s.total_cost) || 0,
                     profit: Number(s.profit) || 0,
-                    itemsJson: typeof s.items_json === 'string' ? s.items_json : JSON.stringify(s.items_json),
+                    itemsJson: typeof s.items_json === 'string' ? s.items_json : JSON.stringify(s.items_json || []),
                     isReturned: s.is_returned || false
                 }));
                 await this.sales.bulkPut(cleanedSales);
             }
 
-            // 3. مزامنة المنصرفات
+            // 3. مزامنة المنصرفات (ربط دقيق للنوع والملاحظات)
             const { data: expData, error: expErr } = await supabase.from('expenses').select('*');
             if (expErr) console.error('Cloud Sync Error (Expenses):', expErr);
             if (expData) {
                 const cleanedExp: Expense[] = expData.map((e: any) => ({
-                    timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp),
+                    timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp || 0),
                     amount: Number(e.amount) || 0,
                     description: e.description || '',
                     type: e.type || 'عام'
