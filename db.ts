@@ -164,16 +164,20 @@ export class RahaDB extends Dexie {
     /**
      * دالة المزامنة الشاملة (Pull & Map - Mirror Logic): 
      * تجلب البيانات من السحاب، تحولها لكائنات محلية دقيقة، وتعالج النقص في الحقول.
-     * الهدف: السحاب هو المصدر الوحيد للحقيقة.
+     * الهدف: السحاب هو المصدر الوحيد للحقيقة (حذف ما هو غير موجود في السحاب).
      */
     async fullSyncFromCloud() {
         if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
 
         try {
-            // 1. مزامنة المخزون (استخدام جدول medicines)
+            // 1. مزامنة المخزون (Smart Mirror)
             const { data: invData, error: invErr } = await supabase.from('medicines').select('*');
             if (invErr) console.error('Cloud Sync Error (Inventory):', invErr);
             if (invData) {
+                const cloudIds = new Set(invData.map(i => i.id));
+                // حذف العناصر المحلية التي اختفت من السحاب
+                await this.medicines.filter(m => m.id !== undefined && !cloudIds.has(m.id)).delete();
+
                 const cleanedInv: Medicine[] = invData.map((item: any) => ({
                     id: item.id,
                     name: item.name || 'صنف غير معروف',
@@ -191,10 +195,14 @@ export class RahaDB extends Dexie {
                 await this.medicines.bulkPut(cleanedInv);
             }
 
-            // 2. مزامنة المبيعات (إرسال واستقبال كامل للتفاصيل المالية)
+            // 2. مزامنة المبيعات (Smart Mirror)
             const { data: salesData, error: salesErr } = await supabase.from('sales').select('*');
             if (salesErr) console.error('Cloud Sync Error (Sales):', salesErr);
             if (salesData) {
+                // استخدام Timestamp كمعرف فريد للمطابقة لأن ID قد يختلف
+                const cloudTimestamps = new Set(salesData.map(s => typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp)));
+                await this.sales.filter(s => !cloudTimestamps.has(s.timestamp)).delete();
+
                 const cleanedSales: Sale[] = salesData.map((s: any) => ({
                     timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp || 0),
                     totalAmount: Number(s.total_amount) || 0,
@@ -213,10 +221,13 @@ export class RahaDB extends Dexie {
                 await this.sales.bulkPut(cleanedSales);
             }
 
-            // 3. مزامنة المنصرفات (ربط دقيق للنوع والملاحظات)
+            // 3. مزامنة المنصرفات (Smart Mirror)
             const { data: expData, error: expErr } = await supabase.from('expenses').select('*');
             if (expErr) console.error('Cloud Sync Error (Expenses):', expErr);
             if (expData) {
+                const cloudTimestamps = new Set(expData.map(e => typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp)));
+                await this.expenses.filter(e => !cloudTimestamps.has(e.timestamp)).delete();
+
                 const cleanedExp: Expense[] = expData.map((e: any) => ({
                     timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp || 0),
                     amount: Number(e.amount) || 0,
@@ -230,6 +241,98 @@ export class RahaDB extends Dexie {
         } catch (error) {
             console.error('Raha Sync Overall Error:', error);
             return { success: false, error };
+        }
+    }
+
+    /**
+     * تصفير البيانات السحابية بالكامل (للاستخدام عند تصفير التطبيق)
+     */
+    async clearCloudData() {
+        if (!supabase) return;
+        try {
+            // حذف كل السجلات (بدون شرط)
+            await Promise.all([
+                supabase.from('sales').delete().neq('id', -1),
+                supabase.from('expenses').delete().neq('id', -1),
+                supabase.from('medicines').delete().neq('id', -1) // اختياري حسب رغبة المستخدم
+            ]);
+        } catch (e) {
+            console.error('Cloud Clear Error:', e);
+        }
+    }
+
+    /**
+     * رفع كافة البيانات المحلية للسحاب (Force Push)
+     * يستخدم عند استعادة نسخة احتياطية لضمان تطابق السحاب مع المحلي
+     */
+    async fullUploadToCloud() {
+        if (!supabase) return;
+        try {
+            // 1. المخزون
+            const meds = await this.medicines.toArray();
+            if (meds.length > 0) {
+                const cloudMeds = meds.map(m => ({
+                    id: m.id,
+                    name: m.name,
+                    barcode: m.barcode,
+                    price: m.price,
+                    cost_price: m.costPrice,
+                    stock: m.stock,
+                    category: m.category,
+                    expiry_date: m.expiryDate,
+                    supplier: m.supplier,
+                    added_date: m.addedDate,
+                    usage_count: m.usageCount,
+                    last_sold: m.lastSold
+                }));
+                // نقوم بتقسيم البيانات لدفعات لتجنب مشاكل الحجم
+                for (let i = 0; i < cloudMeds.length; i += 100) {
+                    await supabase.from('medicines').upsert(cloudMeds.slice(i, i + 100));
+                }
+            }
+
+            // 2. المبيعات
+            const sales = await this.sales.toArray();
+            if (sales.length > 0) {
+                const cloudSales = sales.map(s => ({
+                    // id: s.id, // نترك الـ ID ليتم توليده أو تحديثه حسب التطابق
+                    timestamp: s.timestamp,
+                    total_amount: s.totalAmount,
+                    discount: s.discount,
+                    net_amount: s.netAmount,
+                    cash_amount: s.cashAmount,
+                    bank_amount: s.bankAmount,
+                    debt_amount: s.debtAmount,
+                    bank_trx_id: s.bankTrxId,
+                    customer_name: s.customerName,
+                    total_cost: s.totalCost,
+                    profit: s.profit,
+                    items_json: s.itemsJson,
+                    is_returned: s.isReturned
+                }));
+                for (let i = 0; i < cloudSales.length; i += 100) {
+                    await supabase.from('sales').upsert(cloudSales.slice(i, i + 100), { onConflict: 'timestamp' });
+                }
+            }
+
+            // 3. المنصرفات
+            const exps = await this.expenses.toArray();
+            if (exps.length > 0) {
+                const cloudExps = exps.map(e => ({
+                    timestamp: e.timestamp,
+                    amount: e.amount,
+                    description: e.description,
+                    type: e.type
+                }));
+                for (let i = 0; i < cloudExps.length; i += 100) {
+                    await supabase.from('expenses').upsert(cloudExps.slice(i, i + 100), { onConflict: 'timestamp' });
+                }
+            }
+
+            return true;
+        } catch (e) {
+            console.error('Full Upload Error:', e);
+            return false;
         }
     }
 }

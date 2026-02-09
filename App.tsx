@@ -411,6 +411,12 @@ const App: React.FC = () => {
                         db.notifications.bulkAdd(data.notifications || [])
                     ]);
                 });
+
+                // Sync with Cloud (Mirror Restore)
+                triggerNotif("جاري مزامنة النسخة مع السحاب...", "info");
+                await db.clearCloudData();
+                await db.fullUploadToCloud();
+
                 alert('تمت استعادة البيانات بنجاح! سيتم إعادة تشغيل التطبيق الآن.');
                 window.location.reload();
             } catch (err) { triggerNotif("خطأ في قراءة ملف النسخة الاحتياطية", "error"); }
@@ -426,7 +432,9 @@ const App: React.FC = () => {
             await db.transaction('rw', [db.sales, db.expenses, db.notifications], async () => {
                 await Promise.all([db.sales.clear(), db.expenses.clear(), db.notifications.clear()]);
             });
-            triggerNotif("تم تصفير السجلات والتقارير بنجاح", "info");
+            // Zeroing Cloud Data as well
+            await db.clearCloudData();
+            triggerNotif("تم تصفير السجلات والتقارير بنجاح (محلياً وسحابياً)", "info");
             loadData();
         }
     }, [salesHistory, medicines.length, loadData, triggerNotif]);
