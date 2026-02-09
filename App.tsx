@@ -428,15 +428,19 @@ const App: React.FC = () => {
         const totalSales = salesHistory.reduce((a: number, b) => a + (b.isReturned ? 0 : b.netAmount), 0);
         // تم تحديث الرسالة لتوضح أن التصفير للمنصرفات فقط
         const summary = `تقرير التصفير:\nإجمالي المبيعات: ${totalSales.toFixed(2)}\nإجمالي الأصناف: ${medicines.length}`;
-        if (confirm(`${summary}\n\nهل أنت متأكد من تصفير المنصرفات والإشعارات؟ (لن يتم حذف المبيعات أو المخزون).`)) {
+        if (confirm(`${summary}\n\nهل أنت متأكد من تصفير التطبيق؟\n(سيتم حذف: المبيعات، التقارير، المنصرفات، الإشعارات)\n(لن يتم حذف: المخزون/الأصناف)`)) {
             // @ts-ignore
             await db.transaction('rw', [db.sales, db.expenses, db.notifications], async () => {
-                // حذف المنصرفات والإشعارات فقط - حماية المبيعات
-                await Promise.all([db.expenses.clear(), db.notifications.clear()]);
+                // تصفير شامل ما عدا المخزون
+                await Promise.all([
+                    db.sales.clear(),
+                    db.expenses.clear(),
+                    db.notifications.clear()
+                ]);
             });
-            // Zeroing Cloud Data (Expenses Only)
+            // تصفير السحاب أيضاً
             await db.clearCloudData();
-            triggerNotif("تم تصفير المنصرفات والإشعارات بنجاح", "info");
+            triggerNotif("تم تصفير التطبيق بنجاح (المبيعات والتقارير حذفت، المخزون باقٍ)", "info");
             loadData();
         }
     }, [salesHistory, medicines.length, loadData, triggerNotif]);
