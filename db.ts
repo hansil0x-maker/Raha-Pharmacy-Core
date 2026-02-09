@@ -162,22 +162,20 @@ export class RahaDB extends Dexie {
     }
 
     /**
-     * دالة المزامنة الشاملة (Pull & Map - Mirror Logic): 
-     * تجلب البيانات من السحاب، تحولها لكائنات محلية دقيقة، وتعالج النقص في الحقول.
-     * الهدف: السحاب هو المصدر الوحيد للحقيقة (حذف ما هو غير موجود في السحاب).
+     * دالة المزامنة الشاملة - الحل النهائي (Merge-Only - آمنة 100%)
+     * تدمج البيانات من السحاب مع المحلي بدون أي حذف
+     * القاعدة: لا حذف أبداً، دمج فقط
      */
     async fullSyncFromCloud() {
         if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
 
         try {
-            // 1. مزامنة المخزون (Smart Mirror)
+            let totalMerged = 0;
+
+            // 1. مزامنة المخزون (Merge Only - بدون حذف)
             const { data: invData, error: invErr } = await supabase.from('medicines').select('*');
             if (invErr) console.error('Cloud Sync Error (Inventory):', invErr);
-            if (invData) {
-                const cloudIds = new Set(invData.map(i => i.id));
-                // حذف العناصر المحلية التي اختفت من السحاب
-                await this.medicines.filter(m => m.id !== undefined && !cloudIds.has(m.id)).delete();
-
+            if (invData && invData.length > 0) {
                 const cleanedInv: Medicine[] = invData.map((item: any) => ({
                     id: item.id,
                     name: item.name || 'صنف غير معروف',
@@ -193,16 +191,13 @@ export class RahaDB extends Dexie {
                     lastSold: item.last_sold || undefined
                 }));
                 await this.medicines.bulkPut(cleanedInv);
+                totalMerged += cleanedInv.length;
             }
 
-            // 2. مزامنة المبيعات (Smart Mirror)
+            // 2. مزامنة المبيعات (Merge Only - بدون حذف)
             const { data: salesData, error: salesErr } = await supabase.from('sales').select('*');
             if (salesErr) console.error('Cloud Sync Error (Sales):', salesErr);
-            if (salesData) {
-                // استخدام Timestamp كمعرف فريد للمطابقة لأن ID قد يختلف
-                const cloudTimestamps = new Set(salesData.map(s => typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp)));
-                await this.sales.filter(s => !cloudTimestamps.has(s.timestamp)).delete();
-
+            if (salesData && salesData.length > 0) {
                 const cleanedSales: Sale[] = salesData.map((s: any) => ({
                     timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp || 0),
                     totalAmount: Number(s.total_amount) || 0,
@@ -219,15 +214,13 @@ export class RahaDB extends Dexie {
                     isReturned: s.is_returned || false
                 }));
                 await this.sales.bulkPut(cleanedSales);
+                totalMerged += cleanedSales.length;
             }
 
-            // 3. مزامنة المنصرفات (Smart Mirror)
+            // 3. مزامنة المنصرفات (Merge Only - بدون حذف)
             const { data: expData, error: expErr } = await supabase.from('expenses').select('*');
             if (expErr) console.error('Cloud Sync Error (Expenses):', expErr);
-            if (expData) {
-                const cloudTimestamps = new Set(expData.map(e => typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp)));
-                await this.expenses.filter(e => !cloudTimestamps.has(e.timestamp)).delete();
-
+            if (expData && expData.length > 0) {
                 const cleanedExp: Expense[] = expData.map((e: any) => ({
                     timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp || 0),
                     amount: Number(e.amount) || 0,
@@ -235,9 +228,10 @@ export class RahaDB extends Dexie {
                     type: e.type || 'عام'
                 }));
                 await this.expenses.bulkPut(cleanedExp);
+                totalMerged += cleanedExp.length;
             }
 
-            return { success: true, count: invData?.length || 0 };
+            return { success: true, count: totalMerged, message: `تم دمج ${totalMerged} سجل بنجاح` };
         } catch (error) {
             console.error('Raha Sync Overall Error:', error);
             return { success: false, error };
