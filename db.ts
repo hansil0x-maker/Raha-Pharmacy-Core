@@ -12,19 +12,19 @@ export const supabase = (SUPABASE_URL && SUPABASE_KEY)
 
 export class RahaDB extends Dexie {
     medicines!: Table<Medicine, number>;
-    sales!: Table<Sale, number>;
-    expenses!: Table<Expense, number>;
+    sales!: Table<Sale, number>;  // timestamp كمفتاح لكن نوعه number
+    expenses!: Table<Expense, number>;  // timestamp كمفتاح لكن نوعه number
     customers!: Table<Customer, number>;
     notifications!: Table<AppNotification, number>;
 
     constructor() {
         super('RahaDB');
 
-        // الفهرسة المتقدمة (الإصدار 8) لضمان سرعة البحث
-        this.version(8).stores({
+        // الفهرسة المتقدمة (الإصدار 9) - إصلاح التكرار عبر timestamp كمفتاح أساسي
+        this.version(9).stores({
             medicines: '++id, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
-            sales: '++id, timestamp, customerName, isReturned',
-            expenses: '++id, timestamp, type',
+            sales: 'timestamp, customerName, isReturned',  // timestamp كمفتاح أساسي لمنع التكرار
+            expenses: 'timestamp, type',  // timestamp كمفتاح أساسي لمنع التكرار
             customers: '++id, name',
             notifications: '++id, timestamp'
         });
@@ -162,9 +162,8 @@ export class RahaDB extends Dexie {
     }
 
     /**
-     * دالة المزامنة الشاملة - الحل النهائي (Merge-Only - آمنة 100%)
-     * تدمج البيانات من السحاب مع المحلي بدون أي حذف
-     * القاعدة: لا حذف أبداً، دمج فقط
+     * دالة المزامنة الشاملة - الحل النهائي المحصن (Merge-Only)
+     * تدمج البيانات وتضمن عدم وجود أخطاء في المفاتيح (DataError)
      */
     async fullSyncFromCloud() {
         if (!supabase) return { success: false, message: 'اتصال Supabase غير مهيأ' };
@@ -172,69 +171,89 @@ export class RahaDB extends Dexie {
         try {
             let totalMerged = 0;
 
-            // 1. مزامنة المخزون (Merge Only - بدون حذف)
+            // 1. مزامنة المخزون (Safe Merge)
             const { data: invData, error: invErr } = await supabase.from('medicines').select('*');
             if (invErr) console.error('Cloud Sync Error (Inventory):', invErr);
             if (invData && invData.length > 0) {
-                const cleanedInv: Medicine[] = invData.map((item: any) => ({
-                    id: item.id,
-                    name: item.name || 'صنف غير معروف',
-                    barcode: item.barcode || '',
-                    price: Number(item.price) || 0,
-                    costPrice: Number(item.cost_price) || 0,
-                    stock: Number(item.stock) || 0,
-                    category: item.category || 'عام',
-                    expiryDate: item.expiry_date || '',
-                    supplier: item.supplier || '',
-                    addedDate: item.added_date || new Date().toISOString().split('T')[0],
-                    usageCount: item.usage_count || 0,
-                    lastSold: item.last_sold || undefined
-                }));
+                const cleanedInv: Medicine[] = invData
+                    .filter(item => item.name) // تصفية العناصر الفارغة
+                    .map((item: any) => ({
+                        id: item.id || undefined, // ضمان عدم إرسال null للمفتاح الأساسي
+                        name: item.name || 'صنف غير معروف',
+                        barcode: item.barcode || '',
+                        price: Number(item.price) || 0,
+                        costPrice: Number(item.cost_price) || 0,
+                        stock: Number(item.stock) || 0,
+                        category: item.category || 'عام',
+                        expiryDate: item.expiry_date || '',
+                        supplier: item.supplier || '',
+                        addedDate: item.added_date || new Date().toISOString().split('T')[0],
+                        usageCount: item.usage_count || 0,
+                        lastSold: item.last_sold || undefined
+                    }));
                 await this.medicines.bulkPut(cleanedInv);
                 totalMerged += cleanedInv.length;
             }
 
-            // 2. مزامنة المبيعات (Merge Only - بدون حذف)
+            // 2. مزامنة المبيعات (Safe Merge)
             const { data: salesData, error: salesErr } = await supabase.from('sales').select('*');
             if (salesErr) console.error('Cloud Sync Error (Sales):', salesErr);
             if (salesData && salesData.length > 0) {
-                const cleanedSales: Sale[] = salesData.map((s: any) => ({
-                    timestamp: typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp || 0),
-                    totalAmount: Number(s.total_amount) || 0,
-                    discount: Number(s.discount) || 0,
-                    netAmount: Number(s.net_amount) || 0,
-                    cashAmount: Number(s.cash_amount) || 0,
-                    bankAmount: Number(s.bank_amount) || 0,
-                    debtAmount: Number(s.debt_amount) || 0,
-                    bankTrxId: s.bank_trx_id || '',
-                    customerName: s.customer_name || 'زبون عام',
-                    totalCost: Number(s.total_cost) || 0,
-                    profit: Number(s.profit) || 0,
-                    itemsJson: typeof s.items_json === 'string' ? s.items_json : JSON.stringify(s.items_json || []),
-                    isReturned: s.is_returned || false
-                }));
-                await this.sales.bulkPut(cleanedSales);
-                totalMerged += cleanedSales.length;
+                const cleanedSales: Sale[] = salesData
+                    .map((s: any) => {
+                        const ts = typeof s.timestamp === 'string' ? new Date(s.timestamp).getTime() : Number(s.timestamp);
+                        return { ...s, ts };
+                    })
+                    .filter(s => !isNaN(s.ts) && s.ts > 0) // تجاهل السجلات ذات الطابع الزمني الخاطئ
+                    .map((s: any) => ({
+                        timestamp: s.ts,
+                        totalAmount: Number(s.total_amount) || 0,
+                        discount: Number(s.discount) || 0,
+                        netAmount: Number(s.net_amount) || 0,
+                        cashAmount: Number(s.cash_amount) || 0,
+                        bankAmount: Number(s.bank_amount) || 0,
+                        debtAmount: Number(s.debt_amount) || 0,
+                        bankTrxId: s.bank_trx_id || '',
+                        customerName: s.customer_name || 'زبون عام',
+                        totalCost: Number(s.total_cost) || 0,
+                        profit: Number(s.profit) || 0,
+                        itemsJson: typeof s.items_json === 'string' ? s.items_json : JSON.stringify(s.items_json || []),
+                        isReturned: s.is_returned || false
+                    }));
+
+                if (cleanedSales.length > 0) {
+                    await this.sales.bulkPut(cleanedSales);
+                    totalMerged += cleanedSales.length;
+                }
             }
 
-            // 3. مزامنة المنصرفات (Merge Only - بدون حذف)
+            // 3. مزامنة المنصرفات (Safe Merge)
             const { data: expData, error: expErr } = await supabase.from('expenses').select('*');
             if (expErr) console.error('Cloud Sync Error (Expenses):', expErr);
             if (expData && expData.length > 0) {
-                const cleanedExp: Expense[] = expData.map((e: any) => ({
-                    timestamp: typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp || 0),
-                    amount: Number(e.amount) || 0,
-                    description: e.description || '',
-                    type: e.type || 'عام'
-                }));
-                await this.expenses.bulkPut(cleanedExp);
-                totalMerged += cleanedExp.length;
+                const cleanedExp: Expense[] = expData
+                    .map((e: any) => {
+                        const ts = typeof e.timestamp === 'string' ? new Date(e.timestamp).getTime() : Number(e.timestamp);
+                        return { ...e, ts };
+                    })
+                    .filter(e => !isNaN(e.ts) && e.ts > 0)
+                    .map((e: any) => ({
+                        timestamp: e.ts,
+                        amount: Number(e.amount) || 0,
+                        description: e.description || '',
+                        type: e.type || 'عام'
+                    }));
+
+                if (cleanedExp.length > 0) {
+                    await this.expenses.bulkPut(cleanedExp);
+                    totalMerged += cleanedExp.length;
+                }
             }
 
             return { success: true, count: totalMerged, message: `تم دمج ${totalMerged} سجل بنجاح` };
-        } catch (error) {
+        } catch (error: any) {
             console.error('Raha Sync Overall Error:', error);
-            return { success: false, error };
+            return { success: false, message: error?.message || String(error) };
         }
     }
 
