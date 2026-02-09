@@ -426,15 +426,17 @@ const App: React.FC = () => {
 
     const resetApp = useCallback(async () => {
         const totalSales = salesHistory.reduce((a: number, b) => a + (b.isReturned ? 0 : b.netAmount), 0);
+        // تم تحديث الرسالة لتوضح أن التصفير للمنصرفات فقط
         const summary = `تقرير التصفير:\nإجمالي المبيعات: ${totalSales.toFixed(2)}\nإجمالي الأصناف: ${medicines.length}`;
-        if (confirm(`${summary}\n\nهل أنت متأكد من تصفير التطبيق بالكامل؟ لا يمكن التراجع.`)) {
+        if (confirm(`${summary}\n\nهل أنت متأكد من تصفير المنصرفات والإشعارات؟ (لن يتم حذف المبيعات أو المخزون).`)) {
             // @ts-ignore
             await db.transaction('rw', [db.sales, db.expenses, db.notifications], async () => {
-                await Promise.all([db.sales.clear(), db.expenses.clear(), db.notifications.clear()]);
+                // حذف المنصرفات والإشعارات فقط - حماية المبيعات
+                await Promise.all([db.expenses.clear(), db.notifications.clear()]);
             });
-            // Zeroing Cloud Data as well
+            // Zeroing Cloud Data (Expenses Only)
             await db.clearCloudData();
-            triggerNotif("تم تصفير السجلات والتقارير بنجاح (محلياً وسحابياً)", "info");
+            triggerNotif("تم تصفير المنصرفات والإشعارات بنجاح", "info");
             loadData();
         }
     }, [salesHistory, medicines.length, loadData, triggerNotif]);
@@ -591,11 +593,18 @@ const App: React.FC = () => {
                         <button
                             disabled={isSyncing}
                             onClick={async () => {
-                                if (confirm('هل أنت متأكد من مزامنة كافة البيانات من السحاب؟ سيتم استبدال البيانات المحلية.')) {
+                                if (confirm('هل أنت متأكد من بدء المزامنة؟ سيتم إرسال بياناتك ثم جلب التحديثات.')) {
                                     setIsSyncing(true);
+                                    triggerNotif("جاري رفع البيانات المحلية...", "info");
+                                    // 1. Force Push Local Data first to protect new items
+                                    await db.fullUploadToCloud();
+
+                                    // 2. Then Pull (Mirror)
+                                    triggerNotif("جاري جلب التحديثات...", "info");
                                     const res = await db.fullSyncFromCloud();
+
                                     if (res.success) {
-                                        triggerNotif(`تمت مزامنة ${res.count} صنف بنجاح`, "info");
+                                        triggerNotif(`تمت المزامنة بنجاح`, "info");
                                         await loadData();
                                     } else {
                                         triggerNotif(res.message || "فشل في المزامنة السحابية", "error");

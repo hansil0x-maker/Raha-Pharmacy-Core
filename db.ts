@@ -250,12 +250,9 @@ export class RahaDB extends Dexie {
     async clearCloudData() {
         if (!supabase) return;
         try {
-            // حذف كل السجلات (بدون شرط)
-            await Promise.all([
-                supabase.from('sales').delete().neq('id', -1),
-                supabase.from('expenses').delete().neq('id', -1),
-                supabase.from('medicines').delete().neq('id', -1) // اختياري حسب رغبة المستخدم
-            ]);
+            // حذف المنصرفات فقط (حسب طلب المستخدم: التصفير لا يشمل المبيعات أو المخزون)
+            await supabase.from('expenses').delete().neq('id', -1);
+            // لاحظ: لا نحذف المبيعات أو المخزون بناءً على التوجيه الجديد
         } catch (e) {
             console.error('Cloud Clear Error:', e);
         }
