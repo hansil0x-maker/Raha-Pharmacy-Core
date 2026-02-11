@@ -175,9 +175,19 @@ const App: React.FC = () => {
         });
 
         // 2. فحص الأدوية الراكدة (لم تُبع منذ 60 يوم)
-        const stagnantMeds = medicines.filter(med =>
-            !med.lastSold || (typeof med.lastSold === 'number' && med.lastSold < sixtyDaysAgo)
-        );
+        const stagnantMeds = medicines.filter(med => {
+            if (med.stock <= 0) return false;
+            const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
+            const addedTime = med.addedDate ? new Date(med.addedDate).getTime() : Date.now();
+
+            if (med.lastSold) {
+                const lastSoldTime = typeof med.lastSold === 'number' ? med.lastSold : new Date(med.lastSold).getTime();
+                return lastSoldTime < sixtyDaysAgo;
+            } else {
+                // منتج جديد لم يُبع أبداً، نحسب الركود من تاريخ الإضافة
+                return addedTime < sixtyDaysAgo;
+            }
+        });
 
         if (stagnantMeds.length > 0) {
             alerts.push({
