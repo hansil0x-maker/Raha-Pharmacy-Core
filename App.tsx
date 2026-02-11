@@ -147,7 +147,7 @@ const App: React.FC = () => {
         // 1. فحص المخزون المنخفض والمنتهي
         medicines.forEach(med => {
             // تنبيه المخزون المنخفض
-            if (med.stock > 0 && med.stock <= 5) {
+            if (med.stock > 0 && med.stock <= 10) {
                 alerts.push({
                     message: `⚠️ مخزون منخفض: ${med.name} (${med.stock} فقط)`,
                     type: 'warning',
@@ -238,8 +238,8 @@ const App: React.FC = () => {
         return () => { clearTimeout(timer); clearInterval(interval); };
     }, [analyzeBusinessHealth]);
 
-    const categories = useMemo(() => ['الكل', ...Array.from(new Set(medicines.map(m => m.category))).filter(Boolean)], [medicines]);
-    const suppliers = useMemo(() => ['الكل', ...Array.from(new Set(medicines.map(m => m.supplier))).filter(Boolean)], [medicines]);
+    const categories = useMemo(() => ['الكل', ...Array.from(new Set(medicines.map(m => (m.category || '').trim()))).filter(Boolean)], [medicines]);
+    const suppliers = useMemo(() => ['الكل', ...Array.from(new Set(medicines.map(m => (m.supplier || '').trim()))).filter(Boolean)], [medicines]);
 
     const posItems = useMemo(() => {
         return medicines.filter(m => {
@@ -258,9 +258,24 @@ const App: React.FC = () => {
     }, [medicines]);
 
     const alerts = useMemo(() => {
-        const low = medicines.filter(m => m.stock > 0 && m.stock <= 5).length;
+        const low = medicines.filter(m => m.stock > 0 && m.stock <= 10).length;
         const out = medicines.filter(m => m.stock <= 0).length;
         return { total: low + out };
+    }, [medicines]);
+
+    const inventoryAnalytics = useMemo(() => {
+        const total = medicines.length || 1;
+        const soldAtLeastOnce = medicines.filter(m => m.lastSold).length;
+        const salesRate = (soldAtLeastOnce / total) * 100;
+
+        const stagnantCount = medicines.filter(m => {
+            if (m.stock <= 0) return false;
+            const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
+            const addedTime = m.addedDate ? new Date(m.addedDate).getTime() : Date.now();
+            return m.lastSold ? (typeof m.lastSold === 'number' ? m.lastSold : 0) < sixtyDaysAgo : addedTime < sixtyDaysAgo;
+        }).length;
+
+        return { salesRate, stagnantCount, total };
     }, [medicines]);
 
     const expenseTypes = useMemo(() => {
@@ -270,8 +285,9 @@ const App: React.FC = () => {
     }, [expenses]);
 
 
+    const now = Date.now();
+
     const filteredInventory = useMemo(() => {
-        const now = Date.now();
         const today = new Date().toISOString().split('T')[0];
         const threeMonthsLater = new Date();
         threeMonthsLater.setMonth(threeMonthsLater.getMonth() + 3);
@@ -282,9 +298,22 @@ const App: React.FC = () => {
                 matches = m.name.toLowerCase().includes(invSearchQuery.toLowerCase()) ||
                     (m.barcode && m.barcode.includes(invSearchQuery));
             }
-            if (invStockFilter === 'low') matches = m.stock > 0 && m.stock <= 5;
+            if (invStockFilter === 'low') matches = m.stock > 0 && m.stock <= 10;
             else if (invStockFilter === 'out') matches = m.stock <= 0;
-            else if (invStockFilter === 'stagnant') matches = !m.lastSold || (now - (typeof m.lastSold === 'number' ? m.lastSold : 0) > 60 * 24 * 60 * 60 * 1000);
+            else if (invStockFilter === 'unsold') matches = !m.lastSold && m.stock > 0;
+            else if (invStockFilter === 'stagnant') {
+                if (m.stock <= 0) matches = false;
+                else {
+                    const sixtyDaysAgo = now - (60 * 24 * 60 * 60 * 1000);
+                    const addedTime = m.addedDate ? new Date(m.addedDate).getTime() : now;
+                    if (m.lastSold) {
+                        const lastSoldTime = typeof m.lastSold === 'number' ? m.lastSold : new Date(m.lastSold).getTime();
+                        matches = lastSoldTime < sixtyDaysAgo;
+                    } else {
+                        matches = addedTime < sixtyDaysAgo;
+                    }
+                }
+            }
             if (matches && invDateFilter) matches = m.addedDate === invDateFilter;
             if (matches && invCategoryFilter !== 'الكل') matches = m.category === invCategoryFilter;
             if (matches && invSupplierFilter !== 'الكل') matches = m.supplier === invSupplierFilter;
@@ -701,14 +730,22 @@ const App: React.FC = () => {
                             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" />
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-                            <div className="bg-emerald-600 p-6 rounded-[35px] text-white shadow-xl shadow-emerald-100">
-                                <div className="text-[9px] font-black opacity-70 uppercase mb-1">قيمة المخزون (بيع)</div>
-                                <div className="text-2xl font-black tabular-nums">{inventoryValue.sell.toLocaleString()}</div>
+                        <div className="grid grid-cols-4 gap-3 mb-4">
+                            <div className="bg-emerald-600 p-4 rounded-[30px] text-white shadow-xl shadow-emerald-100 col-span-2">
+                                <div className="text-[8px] font-black opacity-70 uppercase mb-1">قيمة المخزون (بيع)</div>
+                                <div className="text-xl font-black tabular-nums">{inventoryValue.sell.toLocaleString()}</div>
                             </div>
-                            <div className="bg-slate-800 p-6 rounded-[35px] text-white shadow-xl">
-                                <div className="text-[9px] font-black opacity-70 uppercase mb-1">رأس المال (تكلفة)</div>
-                                <div className="text-2xl font-black tabular-nums">{inventoryValue.cost.toLocaleString()}</div>
+                            <div className="bg-slate-800 p-4 rounded-[30px] text-white shadow-xl col-span-2">
+                                <div className="text-[8px] font-black opacity-70 uppercase mb-1">رأس المال (تكلفة)</div>
+                                <div className="text-xl font-black tabular-nums">{inventoryValue.cost.toLocaleString()}</div>
+                            </div>
+                            <div className="bg-amber-50 p-4 rounded-[30px] border border-amber-100">
+                                <div className="text-[8px] font-black text-amber-600 uppercase mb-1">نسبة التداول</div>
+                                <div className="text-lg font-black text-amber-900">{inventoryAnalytics.salesRate.toFixed(1)}%</div>
+                            </div>
+                            <div className="bg-rose-50 p-4 rounded-[30px] border border-rose-100">
+                                <div className="text-[8px] font-black text-rose-600 uppercase mb-1">أصناف راكدة</div>
+                                <div className="text-lg font-black text-rose-900">{inventoryAnalytics.stagnantCount}</div>
                             </div>
                         </div>
 
@@ -716,8 +753,9 @@ const App: React.FC = () => {
                             <div className="flex flex-wrap gap-2">
                                 <select className="bg-slate-50 p-3 rounded-2xl text-[10px] font-black border-none outline-none" value={invStockFilter} onChange={e => setInvStockFilter(e.target.value as any)}>
                                     <option value="all">كل المخزون</option>
-                                    <option value="low">النواقص (5 فأقل)</option>
+                                    <option value="low">النواقص (10 فأقل)</option>
                                     <option value="out">نفد المخزون</option>
+                                    <option value="unsold">ما لم يُبع</option>
                                     <option value="stagnant">منتجات راكدة</option>
                                 </select>
                                 <select className="bg-slate-50 p-3 rounded-2xl text-[10px] font-black border-none outline-none" value={invExpiryFilter} onChange={e => setInvExpiryFilter(e.target.value as any)}>
@@ -768,13 +806,17 @@ const App: React.FC = () => {
                                                             <div className={`w-4 h-4 rounded-full border-2 transition-all ${selectedIds.has(m.id) ? 'bg-emerald-500 border-emerald-500 scale-110' : 'border-slate-300'}`} />
                                                         )}
                                                         <div>
-                                                            <div className="text-slate-800 text-sm font-black">{m.name}</div>
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="text-slate-800 text-sm font-black">{m.name}</div>
+                                                                {!m.lastSold && <span className="text-[7px] px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded-full font-black animate-pulse">جديد</span>}
+                                                                {m.lastSold && (now - (typeof m.lastSold === 'number' ? m.lastSold : 0) > 60 * 24 * 60 * 60 * 1000) && <span className="text-[7px] px-1.5 py-0.5 bg-amber-50 text-amber-500 rounded-full font-black">راكد</span>}
+                                                            </div>
                                                             <div className="text-[9px] text-slate-300">{m.supplier || 'بدون مورد'}</div>
                                                         </div>
                                                     </div>
                                                 </td>
                                                 <td className="p-4">
-                                                    <span className={`px-2 py-1 rounded-lg ${m.stock <= 5 ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-600'}`}>{m.stock}</span>
+                                                    <span className={`px-2 py-1 rounded-lg ${m.stock <= 10 ? 'bg-rose-50 text-rose-500' : 'bg-emerald-50 text-emerald-600'}`}>{m.stock}</span>
                                                 </td>
                                                 <td className="p-4">
                                                     <div className="flex flex-col gap-1">
