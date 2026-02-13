@@ -1,3 +1,7 @@
+// types.ts - النسخة المدمجة النهائية والشاملة
+
+export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications';
+
 export interface Medicine {
   id?: number;
   name: string;
@@ -7,10 +11,19 @@ export interface Medicine {
   stock: number;
   category: string;
   expiryDate: string;
-  addedDate: string; 
-  supplier: string;
-  usageCount: number;
+  
+  // دمج نوع التاريخ لدعم التوافق مع البيانات القديمة والجديدة
+  addedDate?: number | string; 
+  
+  supplier?: string;
+  supplierPhone?: string; // جديد
+  
+  usageCount?: number;
   lastSold?: number;
+  
+  // حقول نظام التجزئة والنواقص الذكي
+  unitsPerPkg?: number;   // سعة العبوة (شريط/حبة)
+  minStockAlert?: number; // حد التنبيه للنواقص
 }
 
 export interface AppNotification {
@@ -41,13 +54,13 @@ export interface Sale {
   cashAmount: number;
   bankAmount: number;
   debtAmount: number;
-  bankTrxId?: string;
-  customerName?: string;
-  totalCost: number;
-  profit: number;
+  bankTrxId: string;      // مطلوب للتدقيق المالي
+  customerName: string;   // مطلوب لربط المبيعات بالعملاء
+  totalCost: number;      // تكلفة البيعة (بناءً على العلبة)
+  profit: number;         // صافي الربح
   timestamp: number;
-  itemsJson: string; 
-  isReturned?: boolean;
+  itemsJson: string;      // تفاصيل المنتجات المباعة
+  isReturned: boolean;    // حالة المرتجع
 }
 
 export interface CartItem {
@@ -55,4 +68,13 @@ export interface CartItem {
   quantity: number;
 }
 
-export type ViewType = 'pos' | 'accounting' | 'inventory' | 'expenses' | 'notifications';
+// واجهة نظام النواقص - النسخة الشاملة
+export interface WantedItem {
+  id?: string; // UUID للسحاب
+  itemName: string;
+  notes?: string;
+  requestCount: number;
+  status: 'pending' | 'ordered' | 'received' | 'completed' | 'archived';
+  createdAt: number;
+  reminderAt?: number; // الحقل الذي كان ناقصاً وتمت إعادته
+}
