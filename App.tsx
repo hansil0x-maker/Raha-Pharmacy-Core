@@ -7,7 +7,7 @@ import {
     ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
 } from 'lucide-react';
 import { db } from './db';
-import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem } from './types';
+import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
 
 // Supabase Configuration has been moved to db.ts
 
@@ -18,6 +18,8 @@ const App: React.FC = () => {
     const [showSupportDialog, setShowSupportDialog] = useState(false);
 
     const [view, setView] = useState<ViewType>('pos');
+    const [currentPharmacy, setCurrentPharmacy] = useState<Pharmacy | null>(null);
+    const [isLoginSheetOpen, setIsLoginSheetOpen] = useState(false);
     const [medicines, setMedicines] = useState<Medicine[]>([]);
     const [salesHistory, setSalesHistory] = useState<Sale[]>([]);
     const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -25,6 +27,8 @@ const App: React.FC = () => {
     const [notifs, setNotifs] = useState<AppNotification[]>([]);
     const [wantedItems, setWantedItems] = useState<WantedItem[]>([]);
     const [activeNotif, setActiveNotif] = useState<AppNotification | null>(null);
+    const [isSuspended, setIsSuspended] = useState(false);
+    const [activationData, setActivationData] = useState({ key: '', password: '' });
     const [searchQuery, setSearchQuery] = useState('');
     const [invSearchQuery, setInvSearchQuery] = useState('');
     const [activeCategory, setActiveCategory] = useState('الكل');
@@ -72,7 +76,12 @@ const App: React.FC = () => {
 
     // Raha Pro Optimization: Memoized trigger for dynamic notifications
     const triggerNotif = useCallback(async (message: string, type: 'warning' | 'error' | 'info' = 'info') => {
-        const n: AppNotification = { message, type, timestamp: Date.now() };
+        const n: AppNotification = {
+            pharmacyId: currentPharmacy?.id,
+            message,
+            type,
+            timestamp: Date.now()
+        };
         await db.notifications.add(n);
         setActiveNotif(n);
         setTimeout(() => setActiveNotif(null), 4000);
@@ -81,10 +90,12 @@ const App: React.FC = () => {
     }, []);
 
     const handleAdminUnlock = useCallback((code: string) => {
-        if (code === 'raha0909') {
+        if (!currentPharmacy) return;
+        const masterKey = currentPharmacy.masterPassword;
+        if (code === masterKey) {
             setIsAdminUnlocked(true);
             setIsUnlockSheetOpen(false);
-            setLoginCode(''); // Reset login code if used
+            setLoginCode('');
             setUnlockCode('');
             setUnlockAttempts(0);
             triggerNotif("تم فك القفل الإداري بنجاح", "info");
@@ -98,7 +109,7 @@ const App: React.FC = () => {
                 triggerNotif(`رمز خاطئ (محاولة ${nextAttempts} من 3)`, "error");
             }
         }
-    }, [unlockAttempts, triggerNotif]);
+    }, [unlockAttempts, triggerNotif, currentPharmacy]);
 
     const loadData = useCallback(async () => {
         const [m, s, e, c, n, w] = await Promise.all([
@@ -122,7 +133,24 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        loadData();
+        const initAuth = async () => {
+            const saved = await db.pharmacies.toCollection().first();
+            if (saved) {
+                setCurrentPharmacy(saved);
+                setIsAuthenticated(true);
+                loadData();
+
+                // Periodic status check
+                const statusCheck = await db.verifyPharmacy(saved.pharmacyKey);
+                if (statusCheck && statusCheck.status === 'suspended') {
+                    setIsSuspended(true);
+                }
+            } else {
+                setIsAuthenticated(false);
+            }
+        };
+        initAuth();
+
         // Check for active reminders on app start (Pulse mode)
         const checkReminders = async () => {
             const items = await db.wantedItems.toArray();
@@ -130,7 +158,7 @@ const App: React.FC = () => {
             const activeReminders = items.filter(i => i.status === 'pending' && i.reminderAt && i.reminderAt <= now);
             for (const item of activeReminders) {
                 triggerNotif(`⏰ تذكر: "${item.itemName}" موجود في النواقص وحان موعده`, 'info');
-                await db.wantedItems.update(item.id, { reminderAt: undefined });
+                await db.wantedItems.update(item.id!, { reminderAt: undefined });
             }
         };
         const rTimer = setTimeout(checkReminders, 2000);
@@ -186,8 +214,8 @@ const App: React.FC = () => {
             const runInitialSync = async () => {
                 if (navigator.onLine) {
                     setIsSyncing(true);
-                    const res = await db.fullSyncFromCloud();
-                    if (res.success) triggerNotif(`تم تحديث ${res.count} صنف من السحاب`, "info");
+                    const res = await db.fullSyncFromCloud(currentPharmacy?.id!);
+                    if (res.success) triggerNotif(`تمت مزامنة البيانات من السحاب بنجاح`, "info");
                     setIsSyncing(false);
                 }
                 loadData();
@@ -627,10 +655,11 @@ const App: React.FC = () => {
                     }
                 }
                 if (payData.cust) {
-                    const existing = await db.customers.where('name').equals(payData.cust).first();
-                    if (!existing) await db.customers.add({ name: payData.cust });
+                    const existing = await db.customers.where('name').equals(payData.cust).and(c => c.pharmacyId === currentPharmacy?.id).first();
+                    if (!existing) await db.customers.add({ pharmacyId: currentPharmacy?.id, name: payData.cust });
                 }
                 await db.sales.add({
+                    pharmacyId: currentPharmacy?.id,
                     totalAmount: cartTotalValue,
                     discount: parseFloat(payData.discount) || 0,
                     netAmount: netValue,
@@ -671,79 +700,160 @@ const App: React.FC = () => {
     const handleWantedAdd = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            // Check if item already exists to increment requestCount
-            const existing = await db.wantedItems.where('itemName').equals(wantedData.name).first();
-            if (existing) {
-                await db.wantedItems.update(existing.id!, {
-                    requestCount: (existing.requestCount || 1) + 1,
-                    notes: wantedData.note || existing.notes
-                });
-                triggerNotif(`تم تحديث الطلب: ${wantedData.name} (تكرر ${existing.requestCount + 1} مرات)`, "info");
-            } else {
-                await db.wantedItems.add({
-                    id: crypto.randomUUID(),
-                    itemName: wantedData.name,
-                    notes: wantedData.note,
-                    requestCount: 1,
-                    status: 'pending',
-                    createdAt: Date.now()
-                });
-                triggerNotif("تمت الإضافة لقائمة النواقص", "info");
-            }
+            await db.smartAddWantedItem({
+                itemName: wantedData.name,
+                notes: wantedData.note,
+                requestCount: 1,
+                status: 'pending',
+                createdAt: Date.now()
+            }, currentPharmacy?.id!);
+
+            triggerNotif("تمت المزامنة الذكية مع قائمة النواقص", "info");
             setIsWantedOpen(false);
             setWantedData({ name: '', note: '', reminder: '' });
             loadData();
         } catch (err) {
             triggerNotif("خطأ في إضافة الناقص", "error");
         }
-    }, [wantedData, loadData, triggerNotif]);
+    }, [wantedData, currentPharmacy, loadData, triggerNotif]);
 
-    const handleLogin = useCallback((e: React.FormEvent) => {
+    const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
-        const code = loginCode.trim();
-        if (code === 'raha0909') {
-            localStorage.setItem('raha_pro_activated', 'true');
-            setIsAuthenticated(true);
-            triggerNotif("تم التفعيل بنجاح", "info");
-        } else {
-            triggerNotif("رمز التفعيل غير صحيح", "error");
-            setLoginCode('');
-        }
-    }, [loginCode, triggerNotif]);
+        const { key, password } = activationData;
+        if (!key || !password) return;
 
-    if (!isAuthenticated) {
+        // منطق الدخول الخاص (الرمز المزدوج للاختبار)
+        if (key === 'raha0909' && password === 'raha0909') {
+            const trialPharmacy: Pharmacy = {
+                id: 'trial-id',
+                pharmacyKey: 'TRIAL',
+                name: 'نسخة التجربة والاختبار',
+                masterPassword: 'raha0909',
+                status: 'active',
+                createdAt: Date.now()
+            };
+            setCurrentPharmacy(trialPharmacy);
+            setIsAuthenticated(true);
+            localStorage.setItem('raha_pro_activated', 'true');
+            triggerNotif("مرحباً بك في نسخة الاختبار الخاصة", "info");
+            loadData();
+            return;
+        }
+
+        setIsSyncing(true);
+        try {
+            const pharmacy = await db.verifyPharmacy(key);
+            if (pharmacy) {
+                // التحقق من كلمة المرور الرئيسية عند التفعيل
+                if (pharmacy.masterPassword !== password) {
+                    triggerNotif("كلمة المرور الرئيسية غير صحيحة", "error");
+                    return;
+                }
+
+                if (pharmacy.status === 'suspended') {
+                    setIsSuspended(true);
+                    triggerNotif("هذا الحساب معطل حالياً", "error");
+                    return;
+                }
+
+                setCurrentPharmacy(pharmacy);
+                setIsAuthenticated(true);
+                localStorage.setItem('raha_pro_activated', 'true');
+                triggerNotif(`مرحباً بك في ${pharmacy.name}`, "info");
+                await db.fullSyncFromCloud(pharmacy.id!);
+                await db.registerDevice(pharmacy.id!);
+                loadData();
+            } else {
+                triggerNotif("رمز الصيدلية غير صحيح أو غير موجود", "error");
+            }
+        } catch (err) {
+            triggerNotif("فشل الاتصال بالسيرفر", "error");
+        } finally {
+            setIsSyncing(false);
+        }
+    }, [activationData, triggerNotif, loadData]);
+
+    const handleLogout = useCallback(async () => {
+        if (confirm("هل أنت متأكد من تسجيل الخروج؟ سيتم مسح البيانات المحلية.")) {
+            await db.pharmacies.clear();
+            await db.medicines.clear();
+            await db.sales.clear();
+            await db.expenses.clear();
+            await db.customers.clear();
+            await db.notifications.clear();
+            await db.wantedItems.clear();
+            setCurrentPharmacy(null);
+            setIsAuthenticated(false);
+            window.location.reload();
+        }
+    }, []);
+
+    if (!isAuthenticated || !currentPharmacy) {
         return (
             <div className="fixed inset-0 bg-slate-900 flex items-center justify-center z-[9999] overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-emerald-600/20 to-slate-900"></div>
                 <div className="bg-white p-12 rounded-[50px] shadow-2xl max-w-md w-full mx-4 relative z-10 animate-in zoom-in-95">
-                    <div className="text-center mb-10">
-                        <div className="w-24 h-24 bg-emerald-600 rounded-[35px] flex items-center justify-center text-white shadow-2xl mx-auto mb-6 rotate-3">
-                            <Layers size={48} />
+                    <div className="text-center mb-8">
+                        <div className="w-20 h-20 bg-emerald-600 rounded-[30px] flex items-center justify-center text-white shadow-2xl mx-auto mb-6 rotate-3">
+                            <Layers size={40} />
                         </div>
                         <h1 className="text-4xl font-black text-slate-800 mb-2">راحة <span className="text-emerald-600 font-black">PRO</span></h1>
-                        <p className="text-sm font-bold text-slate-400">نظام إدارة الصيدليات الذكي - تفعيل النسخة</p>
+                        <p className="text-sm font-bold text-slate-400">نظام إدارة الصيدليات الذكي - تفعيل المزامنة السحابية</p>
                     </div>
-                    <form onSubmit={handleLogin} className="space-y-6">
-                        <div className="relative">
+                    <form onSubmit={handlePharmacyVerify} className="space-y-4">
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 mr-4">رمز الصيدلية (Pharmacy Key)</label>
+                            <input
+                                type="text"
+                                placeholder="مثال: KRT-001"
+                                className="w-full bg-slate-50 p-5 rounded-[25px] font-black text-lg text-center outline-none border-4 border-transparent focus:border-emerald-500/30 focus:bg-white transition-all"
+                                value={activationData.key}
+                                onChange={e => setActivationData({ ...activationData, key: e.target.value })}
+                                autoFocus
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 mr-4">كلمة المرور الرئيسية (Master Password)</label>
                             <input
                                 type="password"
-                                placeholder="أدخل رمز التفعيل..."
-                                className="w-full bg-slate-50 p-6 rounded-[30px] font-black text-2xl text-center outline-none border-4 border-transparent focus:border-emerald-500/30 focus:bg-white transition-all tracking-[0.5em]"
-                                value={loginCode}
-                                onChange={e => setLoginCode(e.target.value)}
-                                autoFocus
+                                placeholder="••••••••"
+                                className="w-full bg-slate-50 p-5 rounded-[25px] font-black text-lg text-center outline-none border-4 border-transparent focus:border-emerald-500/30 focus:bg-white transition-all"
+                                value={activationData.password}
+                                onChange={e => setActivationData({ ...activationData, password: e.target.value })}
                             />
                         </div>
                         <button
                             type="submit"
-                            className="w-full bg-slate-900 text-white py-6 rounded-[30px] font-black text-xl shadow-2xl hover:bg-emerald-600 transition-all active:scale-95"
+                            disabled={isSyncing}
+                            className={`w-full bg-slate-900 text-white py-6 rounded-[30px] font-black text-xl shadow-2xl hover:bg-emerald-600 transition-all active:scale-95 mt-4 ${isSyncing ? 'opacity-50 animate-pulse cursor-wait' : ''}`}
                         >
-                            دخول النظام
+                            {isSyncing ? 'جاري التحقق...' : 'تفعيل النظام الآن'}
                         </button>
                     </form>
-                    <div className="mt-12 text-center">
-                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">Property Rights Protected © 2026</p>
-                        <p className="text-[8px] font-bold text-slate-200 mt-1">Raha Optimization Engine v4.0</p>
+                    <div className="mt-10 text-center">
+                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">SaaS Cloud Architecture © 2026</p>
+                        <p className="text-[8px] font-bold text-slate-200 mt-1">Refactored by Antigravity v5.0</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (isSuspended) {
+        return (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xl flex items-center justify-center z-[10000]">
+                <div className="bg-white p-12 rounded-[50px] shadow-2xl max-w-sm w-full mx-4 text-center space-y-8 animate-in zoom-in-95">
+                    <div className="w-24 h-24 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                        <ShieldAlert size={48} />
+                    </div>
+                    <div className="space-y-4">
+                        <h2 className="text-3xl font-black text-slate-800">الحساب معطل</h2>
+                        <p className="text-slate-500 font-bold leading-relaxed">
+                            تم تعليق وصول هذه الصيدلية إلى النظام. يرجى التواصل مع الإدارة الفنية لإعادة التفعيل.
+                        </p>
+                    </div>
+                    <div className="pt-4 border-t border-slate-100 text-[10px] font-black text-slate-300 uppercase letter-spacing-widest">
+                        Account Suspended - Contact Administrator
                     </div>
                 </div>
             </div>
@@ -786,7 +896,8 @@ const App: React.FC = () => {
 
                                     // 2. Then Pull (Mirror)
                                     triggerNotif("جاري جلب التحديثات...", "info");
-                                    const res = await db.fullSyncFromCloud();
+                                    if (!currentPharmacy?.id) return;
+                                    const res = await db.fullSyncFromCloud(currentPharmacy.id);
 
                                     if (res.success) {
                                         triggerNotif(`تمت المزامنة بنجاح`, "info");
@@ -1220,6 +1331,7 @@ const App: React.FC = () => {
                                 e.preventDefault();
                                 const f = e.target as any;
                                 await db.expenses.add({
+                                    pharmacyId: currentPharmacy?.id,
                                     amount: parseFloat(f.amt.value),
                                     type: f.typ.value,
                                     description: f.dsc.value,
@@ -1430,6 +1542,7 @@ const App: React.FC = () => {
                             e.preventDefault();
                             const f = e.target as any;
                             const data: Medicine = {
+                                pharmacyId: currentPharmacy?.id,
                                 name: f.nm.value, barcode: f.bc.value, price: parseFloat(f.pr.value) || 0,
                                 costPrice: parseFloat(f.cp.value) || 0, stock: parseInt(f.st.value) || 0,
                                 category: f.ct.value, expiryDate: f.ex.value, supplier: f.sp.value,

@@ -1,5 +1,5 @@
 import { Dexie, type Table } from 'dexie';
-import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem } from './types';
+import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmacy, PharmacyDevice } from './types';
 import { createClient } from '@supabase/supabase-js';
 
 // تهيئة عميل Supabase - قناة الاتصال مع سيرفر ألمانيا
@@ -17,25 +17,30 @@ export class RahaDB extends Dexie {
     customers!: Table<Customer, number>;
     notifications!: Table<AppNotification, number>;
     wantedItems!: Table<WantedItem, string>;
+    pharmacies!: Table<Pharmacy, number>;
+    pharmacyDevices!: Table<PharmacyDevice, string>;
 
     constructor() {
         super('RahaDB');
 
-        // الإصدار 10: الحل الجذري والنهائي
-        this.version(10).stores({
-            medicines: '++id, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
-            sales: 'timestamp, customerName, isReturned',
-            expenses: 'timestamp, type',
-            customers: '++id, name',
-            notifications: '++id, timestamp',
-            wantedItems: 'id, itemName, status, createdAt, reminderAt'
+        // الإصدار 11: بصمة الجهاز وتتبع النشاط
+        this.version(11).stores({
+            medicines: '++id, pharmacyId, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
+            sales: 'timestamp, pharmacyId, customerName, isReturned',
+            expenses: 'timestamp, pharmacyId, type',
+            customers: '++id, pharmacyId, name',
+            notifications: '++id, pharmacyId, timestamp',
+            wantedItems: 'id, pharmacyId, itemName, status, createdAt, reminderAt',
+            pharmacies: '++id, pharmacyKey, name',
+            pharmacyDevices: 'id, pharmacyId, hardwareId'
         });
 
         // --- المزامنة التلقائية ---
         this.medicines.hook('creating', (primKey, obj) => {
-            if (supabase) {
+            if (supabase && obj.pharmacyId) {
                 const cloudObj = {
                     id: obj.id,
+                    pharmacy_id: obj.pharmacyId,
                     name: obj.name,
                     barcode: obj.barcode,
                     price: obj.price,
@@ -46,12 +51,13 @@ export class RahaDB extends Dexie {
                     supplier: obj.supplier,
                     supplier_phone: obj.supplierPhone,
                     added_date: obj.addedDate,
-                    usage_count: obj.usageCount || 0,
+                    usage_count: obj.usageCount,
                     last_sold: obj.lastSold,
-                    units_per_pkg: obj.unitsPerPkg || 1,
-                    min_stock_alert: obj.minStockAlert || 0
+                    units_per_pkg: obj.unitsPerPkg,
+                    min_stock_alert: obj.minStockAlert
                 };
-                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => error && console.error('Inv Sync Error:', error)), 0);
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => error && console.error('Supabase Inventory Sync Error:', error)), 0);
+                this.trackActivity(obj.pharmacyId);
             }
         });
 
@@ -60,6 +66,7 @@ export class RahaDB extends Dexie {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
                     id: updated.id,
+                    pharmacy_id: updated.pharmacyId,
                     name: updated.name,
                     barcode: updated.barcode,
                     price: updated.price,
@@ -76,13 +83,15 @@ export class RahaDB extends Dexie {
                     min_stock_alert: updated.minStockAlert || 0
                 };
                 setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => error && console.error('Inv Update Error:', error)), 0);
+                this.trackActivity(updated.pharmacyId);
             }
         });
 
         this.sales.hook('creating', (primKey, obj) => {
-            if (supabase) {
+            if (supabase && obj.pharmacyId) {
                 const cloudObj = {
                     timestamp: obj.timestamp,
+                    pharmacy_id: obj.pharmacyId,
                     total_amount: obj.totalAmount,
                     discount: obj.discount,
                     net_amount: obj.netAmount,
@@ -93,10 +102,10 @@ export class RahaDB extends Dexie {
                     customer_name: obj.customerName,
                     total_cost: obj.totalCost,
                     profit: obj.profit,
-                    items_json: obj.itemsJson,
+                    items_json: JSON.parse(obj.itemsJson),
                     is_returned: obj.isReturned
                 };
-                setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Sales Sync Error:', error)), 0);
+                setTimeout(() => supabase.from('sales').upsert(cloudObj).then(({ error }) => error && console.error('Supabase Sales Sync Error:', error)), 0);
             }
         });
 
@@ -129,14 +138,15 @@ export class RahaDB extends Dexie {
         });
 
         this.expenses.hook('creating', (primKey, obj) => {
-            if (supabase) {
+            if (supabase && obj.pharmacyId) {
                 const cloudObj = {
                     timestamp: obj.timestamp,
+                    pharmacy_id: obj.pharmacyId,
                     amount: obj.amount,
                     description: obj.description,
                     type: obj.type
                 };
-                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => error && console.error('Exp Sync Error:', error)), 0);
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj).then(({ error }) => error && console.error('Supabase Expenses Sync Error:', error)), 0);
             }
         });
 
@@ -145,6 +155,7 @@ export class RahaDB extends Dexie {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
                     timestamp: updated.timestamp,
+                    pharmacy_id: updated.pharmacyId,
                     amount: updated.amount,
                     description: updated.description || '',
                     type: updated.type
@@ -166,9 +177,10 @@ export class RahaDB extends Dexie {
         });
 
         this.wantedItems.hook('creating', (primKey, obj) => {
-            if (supabase) {
+            if (supabase && obj.pharmacyId) {
                 const cloudObj = {
                     id: obj.id,
+                    pharmacy_id: obj.pharmacyId,
                     item_name: obj.itemName,
                     notes: obj.notes,
                     request_count: obj.requestCount,
@@ -181,45 +193,20 @@ export class RahaDB extends Dexie {
         });
     }
 
-    async fullSyncFromCloud() {
+    async fullSyncFromCloud(pharmacyId: string) {
         if (!supabase) return { success: false, message: 'لا يوجد اتصال بالسحاب' };
         try {
-            const { data: sales, error: sErr } = await supabase.from('sales').select('*');
-            if (sErr) console.error('Cloud Sync Error (Sales):', sErr);
-            if (sales) {
-                await this.sales.bulkPut(sales.map((s: any) => ({
-                    timestamp: Number(s.timestamp),
-                    totalAmount: s.total_amount,
-                    discount: s.discount,
-                    netAmount: s.net_amount,
-                    cashAmount: s.cash_amount,
-                    bankAmount: s.bank_amount,
-                    debtAmount: s.debt_amount,
-                    bankTrxId: s.bank_trx_id,
-                    customerName: s.customer_name,
-                    totalCost: s.total_cost,
-                    profit: s.profit,
-                    itemsJson: s.items_json,
-                    isReturned: s.is_returned
-                })));
-            }
+            const { data: medicines, error: mErr } = await supabase.from('medicines').select('*').eq('pharmacy_id', pharmacyId);
+            const { data: sales, error: sErr } = await supabase.from('sales').select('*').eq('pharmacy_id', pharmacyId);
+            const { data: expenses, error: eErr } = await supabase.from('expenses').select('*').eq('pharmacy_id', pharmacyId);
+            const { data: wanted, error: wErr } = await supabase.from('wanted_list').select('*').eq('pharmacy_id', pharmacyId);
 
-            const { data: expenses, error: eErr } = await supabase.from('expenses').select('*');
-            if (eErr) console.error('Cloud Sync Error (Expenses):', eErr);
-            if (expenses) {
-                await this.expenses.bulkPut(expenses.map((e: any) => ({
-                    timestamp: Number(e.timestamp),
-                    amount: e.amount,
-                    description: e.description,
-                    type: e.type
-                })));
-            }
+            if (mErr || sErr || eErr || wErr) throw new Error('خطأ في جلب البيانات من السحاب');
 
-            const { data: meds, error: mErr } = await supabase.from('medicines').select('*');
-            if (mErr) console.error('Cloud Sync Error (Inventory):', mErr);
-            if (meds) {
-                await this.medicines.bulkPut(meds.map((m: any) => ({
+            await this.transaction('rw', [this.medicines, this.sales, this.expenses, this.wantedItems], async () => {
+                if (medicines) await this.medicines.bulkPut(medicines.map((m: any) => ({
                     id: m.id,
+                    pharmacyId: m.pharmacy_id,
                     name: m.name,
                     barcode: m.barcode,
                     price: m.price,
@@ -235,13 +222,35 @@ export class RahaDB extends Dexie {
                     unitsPerPkg: m.units_per_pkg,
                     minStockAlert: m.min_stock_alert
                 })));
-            }
 
-            const { data: wanted, error: wErr } = await supabase.from('wanted_list').select('*');
-            if (wErr) console.error('Cloud Sync Error (WantedList):', wErr);
-            if (wanted) {
-                await this.wantedItems.bulkPut(wanted.map((w: any) => ({
+                if (sales) await this.sales.bulkPut(sales.map((s: any) => ({
+                    timestamp: Number(s.timestamp),
+                    pharmacyId: s.pharmacy_id,
+                    totalAmount: s.total_amount,
+                    discount: s.discount,
+                    netAmount: s.net_amount,
+                    cashAmount: s.cash_amount,
+                    bankAmount: s.bank_amount,
+                    debtAmount: s.debt_amount,
+                    bankTrxId: s.bank_trx_id,
+                    customerName: s.customer_name,
+                    totalCost: s.total_cost,
+                    profit: s.profit,
+                    itemsJson: JSON.stringify(s.items_json),
+                    isReturned: s.is_returned
+                })));
+
+                if (expenses) await this.expenses.bulkPut(expenses.map((e: any) => ({
+                    timestamp: Number(e.timestamp),
+                    pharmacyId: e.pharmacy_id,
+                    amount: e.amount,
+                    description: e.description,
+                    type: e.type
+                })));
+
+                if (wanted) await this.wantedItems.bulkPut(wanted.map((w: any) => ({
                     id: w.id,
+                    pharmacyId: w.pharmacy_id,
                     itemName: w.item_name,
                     notes: w.notes,
                     requestCount: w.request_count,
@@ -249,13 +258,33 @@ export class RahaDB extends Dexie {
                     createdAt: new Date(w.created_at).getTime(),
                     reminderAt: w.reminder_at
                 })));
-            }
+            });
 
             return { success: true };
-        } catch (e) {
-            console.error(e);
-            return { success: false, message: 'حدث خطأ في المزامنة' };
+        } catch (err) {
+            console.error('Full Sync Error:', err);
+            return { success: false, message: 'فشل المزامنة الشاملة' };
         }
+    }
+
+    async verifyPharmacy(key: string) {
+        if (!supabase) return null;
+        const { data, error } = await supabase.from('pharmacies').select('*').eq('pharmacy_key', key).single();
+        if (error || !data) return null;
+
+        await this.pharmacies.clear();
+        await this.pharmacies.add({
+            pharmacyKey: data.pharmacy_key,
+            name: data.name
+        });
+
+        return {
+            id: data.id,
+            pharmacyKey: data.pharmacy_key,
+            name: data.name,
+            masterPassword: data.master_password,
+            status: data.status as 'active' | 'suspended'
+        };
     }
 
     async clearCloudData() {
@@ -321,6 +350,7 @@ export class RahaDB extends Dexie {
             if (exps.length > 0) {
                 const cloudExps = exps.map(e => ({
                     timestamp: e.timestamp,
+                    pharmacy_id: e.pharmacyId,
                     amount: e.amount,
                     description: e.description,
                     type: e.type
@@ -333,6 +363,84 @@ export class RahaDB extends Dexie {
         } catch (e) {
             console.error('Full Upload Error:', e);
             return false;
+        }
+    }
+
+    // --- ميزات تتبع النشاط والأجهزة (Phase 5) ---
+
+    private async trackActivity(pharmacyId: string) {
+        if (!supabase) return;
+        // تحديث آخر ظهور للصيدلية بدون انتظار
+        supabase.from('pharmacies').update({ last_active: new Date().toISOString() }).eq('id', pharmacyId).then();
+    }
+
+    async registerDevice(pharmacyId: string): Promise<string> {
+        let hardwareId = localStorage.getItem('raha_hardware_id');
+        if (!hardwareId) {
+            hardwareId = crypto.randomUUID();
+            localStorage.setItem('raha_hardware_id', hardwareId);
+        }
+
+        const deviceName = `${navigator.platform} - ${navigator.userAgent.split(') ')[0].split(' (')[1] || 'Unknown Device'}`;
+
+        if (supabase) {
+            await supabase.from('pharmacy_devices').upsert({
+                pharmacy_id: pharmacyId,
+                hardware_id: hardwareId,
+                device_name: deviceName,
+                last_login: new Date().toISOString()
+            }, { onConflict: 'pharmacy_id, hardware_id' });
+        }
+
+        return hardwareId;
+    }
+
+    async smartAddWantedItem(item: Omit<WantedItem, 'id'>, pharmacyId: string) {
+        // 1. البحث في قاعدة البيانات المحلية عن صنف "قيد الانتظار" بنفس الاسم
+        const existing = await this.wantedItems
+            .where('itemName')
+            .equalsIgnoreCase(item.itemName)
+            .and((x: WantedItem) => x.status === 'pending' && x.pharmacyId === pharmacyId)
+            .first();
+
+        if (existing) {
+            const updated = {
+                ...existing,
+                requestCount: (existing.requestCount || 1) + 1,
+                notes: item.notes || existing.notes
+            };
+            await this.wantedItems.put(updated);
+
+            // المزامنة مع السحاب
+            if (supabase) {
+                await supabase.from('wanted_list').update({
+                    request_count: updated.requestCount,
+                    notes: updated.notes
+                }).eq('id', updated.id);
+            }
+            return updated;
+        } else {
+            const newItem: WantedItem = {
+                ...item,
+                id: crypto.randomUUID(),
+                pharmacyId,
+                status: 'pending',
+                createdAt: Date.now()
+            };
+            await this.wantedItems.add(newItem);
+
+            if (supabase) {
+                await supabase.from('wanted_list').insert({
+                    id: newItem.id,
+                    pharmacy_id: pharmacyId,
+                    item_name: newItem.itemName,
+                    notes: newItem.notes,
+                    request_count: newItem.requestCount,
+                    status: newItem.status,
+                    created_at: new Date(newItem.createdAt).toISOString()
+                });
+            }
+            return newItem;
         }
     }
 }

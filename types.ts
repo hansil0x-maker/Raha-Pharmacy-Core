@@ -1,80 +1,86 @@
-// types.ts - النسخة المدمجة النهائية والشاملة
+export interface Pharmacy {
+    id: string;
+    pharmacyKey: string;
+    name: string;
+    masterPassword: string;
+    status: 'active' | 'suspended';
+    createdAt: number;
+}
+
+export interface Medicine {
+    id?: number;
+    pharmacyId?: string;
+    name: string;
+    barcode: string;
+    price: number;
+    costPrice: number;
+    stock: number;
+    category: string;
+    expiryDate: string;
+    supplier?: string;
+    supplierPhone?: string;
+    addedDate?: number | string;
+    usageCount?: number;
+    lastSold?: number;
+    unitsPerPkg?: number;
+    minStockAlert?: number;
+}
 
 export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications';
 
-export interface Medicine {
-  id?: number;
-  name: string;
-  barcode: string;
-  price: number;
-  costPrice: number;
-  stock: number;
-  category: string;
-  expiryDate: string;
-  
-  // دمج نوع التاريخ لدعم التوافق مع البيانات القديمة والجديدة
-  addedDate?: number | string; 
-  
-  supplier?: string;
-  supplierPhone?: string; // جديد
-  
-  usageCount?: number;
-  lastSold?: number;
-  
-  // حقول نظام التجزئة والنواقص الذكي
-  unitsPerPkg?: number;   // سعة العبوة (شريط/حبة)
-  minStockAlert?: number; // حد التنبيه للنواقص
-}
-
-export interface AppNotification {
-  id?: number;
-  message: string;
-  type: 'warning' | 'error' | 'info';
-  timestamp: number;
-}
-
-export interface Expense {
-  id?: number;
-  amount: number;
-  type: string;
-  description: string;
-  timestamp: number;
-}
-
-export interface Customer {
-  id?: number;
-  name: string;
+export interface CartItem {
+    medicine: Medicine;
+    quantity: number;
 }
 
 export interface Sale {
-  id?: number;
-  totalAmount: number;
-  discount: number;
-  netAmount: number;
-  cashAmount: number;
-  bankAmount: number;
-  debtAmount: number;
-  bankTrxId: string;      // مطلوب للتدقيق المالي
-  customerName: string;   // مطلوب لربط المبيعات بالعملاء
-  totalCost: number;      // تكلفة البيعة (بناءً على العلبة)
-  profit: number;         // صافي الربح
-  timestamp: number;
-  itemsJson: string;      // تفاصيل المنتجات المباعة
-  isReturned: boolean;    // حالة المرتجع
+    id?: number;
+    pharmacyId?: string;
+    totalAmount: number;
+    discount: number;
+    netAmount: number;
+    cashAmount: number;
+    bankAmount: number;
+    debtAmount: number;
+    bankTrxId: string;
+    customerName: string;
+    totalCost: number;
+    profit: number;
+    timestamp: number;
+    itemsJson: string;
+    isReturned: boolean;
 }
 
-export interface CartItem {
-  medicine: Medicine;
-  quantity: number;
+export interface Expense {
+    id?: number;
+    pharmacyId?: string;
+    description: string;
+    amount: number;
+    type: string;
+    timestamp: number;
 }
 
-// واجهة نظام النواقص - النسخة الشاملة
+export interface Customer {
+    id?: number;
+    pharmacyId?: string;
+    name: string;
+}
+
+export interface AppNotification {
+    id?: number;
+    pharmacyId?: string;
+    message: string;
+    type: 'warning' | 'error' | 'info';
+    timestamp: number;
+}
+
 export interface WantedItem {
-  id?: string; // UUID للسحاب
-  itemName: string;
-  notes?: string;
-  requestCount: number;
-  status: 'pending' | 'ordered' | 'received' | 'completed' | 'archived';
-  createdAt: number;
-  reminderAt?: number; // الحقل الذي كان ناقصاً وتمت إعادته
+    id?: string; // UUID from cloud
+    pharmacyId?: string;
+    itemName: string;
+    notes?: string;
+    requestCount: number;
+    status: 'pending' | 'ordered' | 'received' | 'completed' | 'archived';
+    createdAt: number;
+    reminderAt?: number;
 }
