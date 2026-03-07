@@ -6,7 +6,7 @@ import {
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
     ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
 } from 'lucide-react';
-import { db } from './db';
+import { db, supabase } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
 
 // Supabase Configuration has been moved to db.ts
@@ -45,7 +45,7 @@ const App: React.FC = () => {
     const [expStartDate, setExpStartDate] = useState(new Date().toISOString().split('T')[0]);
     const [expEndDate, setExpEndDate] = useState(new Date().toISOString().split('T')[0]);
     // POS & Modals
-    const [cart, setCart] = useState<Map<number, CartItem>>(new Map());
+    const [cart, setCart] = useState<Map<string, CartItem>>(new Map());
     const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [editingMed, setEditingMed] = useState<Medicine | null>(null);
@@ -57,7 +57,7 @@ const App: React.FC = () => {
     const [wantedData, setWantedData] = useState({ name: '', note: '', reminder: '' });
 
     // Multi-Select & Advanced Debt
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [accSearchQuery, setAccSearchQuery] = useState('');
     const [debtorDetailName, setDebtorDetailName] = useState<string | null>(null);
     const [selectionTimer, setSelectionTimer] = useState<NodeJS.Timeout | null>(null);
@@ -77,6 +77,7 @@ const App: React.FC = () => {
     // Raha Pro Optimization: Memoized trigger for dynamic notifications
     const triggerNotif = useCallback(async (message: string, type: 'warning' | 'error' | 'info' = 'info') => {
         const n: AppNotification = {
+            id: crypto.randomUUID(),
             pharmacyId: currentPharmacy?.id,
             message,
             type,
@@ -145,6 +146,19 @@ const App: React.FC = () => {
                 if (statusCheck && statusCheck.status === 'suspended') {
                     setIsSuspended(true);
                 }
+
+                // Device Ban Check (Kill Switch)
+                const hardwareId = localStorage.getItem('raha_hardware_id');
+                if (hardwareId && saved.id) {
+                    const isBanned = await db.checkDeviceBan(saved.id, hardwareId);
+                    if (isBanned) {
+                        alert('🛑 تم قفل وإيقاف هذا الجهاز من قبل الإدارة المركزية.');
+                        await db.purgeAllLocalData();
+                        localStorage.removeItem('raha_pro_activated');
+                        window.location.reload();
+                        return;
+                    }
+                }
             } else {
                 setIsAuthenticated(false);
             }
@@ -162,10 +176,45 @@ const App: React.FC = () => {
             }
         };
         const rTimer = setTimeout(checkReminders, 2000);
-        return () => clearTimeout(rTimer);
+
+        // --- Real-time System Messages Listener ---
+        let channel: any;
+        if (supabase) {
+            channel = supabase
+                .channel('global_broadcasts')
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'system_messages',
+                    filter: 'is_active=eq.true'
+                }, (payload: any) => {
+                    const msg = payload.new;
+                    const type = msg.priority === 'urgent' ? 'error' : 'info';
+                    triggerNotif(`📢 ${msg.content}`, type);
+
+                    // Native Browser Notification
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification("Raha Pro | تنبيه من الإدارة", {
+                            body: msg.content,
+                            icon: '/logo.png' // Ensure icon exists or use a default
+                        });
+                    }
+                })
+                .subscribe();
+
+            // Request Notification Permission on mount
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }
+
+        return () => {
+            clearTimeout(rTimer);
+            if (channel) supabase.removeChannel(channel);
+        };
     }, [loadData, triggerNotif]);
 
-    const toggleSelect = useCallback((id: number) => {
+    const toggleSelect = useCallback((id: string) => {
         setSelectedIds(prev => {
             const next = new Set(prev);
             if (next.has(id)) next.delete(id);
@@ -194,7 +243,7 @@ const App: React.FC = () => {
         }
     }, [selectedIds, view, loadData, triggerNotif]);
 
-    const startSelect = useCallback((id: number) => {
+    const startSelect = useCallback((id: string) => {
         const timer = setTimeout(() => {
             toggleSelect(id);
             if (navigator.vibrate) navigator.vibrate(50);
@@ -477,7 +526,7 @@ const App: React.FC = () => {
         return { list: filteredExps, totalExp, totalCost, salesProfit, netProfit };
     }, [expenses, salesHistory, expStartDate, expEndDate]);
 
-    const inlineUpdate = useCallback(async (id: number, field: string, value: any) => {
+    const inlineUpdate = useCallback(async (id: string, field: string, value: any) => {
         const val = (field === 'price' || field === 'costPrice' || field === 'stock') ? parseFloat(value) : value;
         await db.medicines.update(id, { [field]: val });
         loadData();
@@ -584,7 +633,7 @@ const App: React.FC = () => {
 
         const qtyToAdd = (isWholePkg && m.unitsPerPkg && m.unitsPerPkg > 0) ? m.unitsPerPkg : 1;
 
-        const newCart = new Map<number, CartItem>(cart);
+        const newCart = new Map<string, CartItem>(cart);
         const item: CartItem = newCart.get(m.id!) || { medicine: m, quantity: 0 };
 
         if (item.quantity + qtyToAdd <= m.stock) {
@@ -610,7 +659,7 @@ const App: React.FC = () => {
         } else { triggerNotif("لا توجد كمية كافية", "warning"); }
     }, [cart, triggerNotif, setCart]);
 
-    const removeFromCart = useCallback((id: number) => {
+    const removeFromCart = useCallback((id: string) => {
         const newCart = new Map(cart);
         const item = newCart.get(id);
         if (!item) return;
@@ -656,9 +705,10 @@ const App: React.FC = () => {
                 }
                 if (payData.cust) {
                     const existing = await db.customers.where('name').equals(payData.cust).and(c => c.pharmacyId === currentPharmacy?.id).first();
-                    if (!existing) await db.customers.add({ pharmacyId: currentPharmacy?.id, name: payData.cust });
+                    if (!existing) await db.customers.add({ id: crypto.randomUUID(), pharmacyId: currentPharmacy?.id, name: payData.cust });
                 }
                 await db.sales.add({
+                    id: crypto.randomUUID(),
                     pharmacyId: currentPharmacy?.id,
                     totalAmount: cartTotalValue,
                     discount: parseFloat(payData.discount) || 0,
@@ -1334,6 +1384,7 @@ const App: React.FC = () => {
                                 e.preventDefault();
                                 const f = e.target as any;
                                 await db.expenses.add({
+                                    id: crypto.randomUUID(),
                                     pharmacyId: currentPharmacy?.id,
                                     amount: parseFloat(f.amt.value),
                                     type: f.typ.value,
@@ -1545,6 +1596,7 @@ const App: React.FC = () => {
                             e.preventDefault();
                             const f = e.target as any;
                             const data: Medicine = {
+                                id: editingMed?.id || crypto.randomUUID(),
                                 pharmacyId: currentPharmacy?.id,
                                 name: f.nm.value, barcode: f.bc.value, price: parseFloat(f.pr.value) || 0,
                                 costPrice: parseFloat(f.cp.value) || 0, stock: parseInt(f.st.value) || 0,
