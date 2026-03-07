@@ -267,6 +267,24 @@ export class RahaDB extends Dexie {
         }
     }
 
+    async purgeAllLocalData() {
+        await this.transaction('rw', [
+            this.medicines, this.sales, this.expenses,
+            this.customers, this.notifications, this.wantedItems,
+            this.pharmacyDevices
+        ], async () => {
+            await Promise.all([
+                this.medicines.clear(),
+                this.sales.clear(),
+                this.expenses.clear(),
+                this.customers.clear(),
+                this.notifications.clear(),
+                this.wantedItems.clear(),
+                this.pharmacyDevices.clear()
+            ]);
+        });
+    }
+
     async verifyPharmacy(key: string) {
         if (!supabase) return null;
         const { data, error } = await supabase.from('pharmacies').select('*').eq('pharmacy_key', key).single();

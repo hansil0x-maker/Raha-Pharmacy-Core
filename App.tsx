@@ -736,6 +736,7 @@ const App: React.FC = () => {
             setIsAuthenticated(true);
             localStorage.setItem('raha_pro_activated', 'true');
             triggerNotif("مرحباً بك في نسخة الاختبار الخاصة", "info");
+            await db.purgeAllLocalData(); // تصفير البيانات المحلية لضمان نسخة نظيفة
             loadData();
             return;
         }
@@ -760,6 +761,8 @@ const App: React.FC = () => {
                 setIsAuthenticated(true);
                 localStorage.setItem('raha_pro_activated', 'true');
                 triggerNotif(`مرحباً بك في ${pharmacy.name}`, "info");
+
+                await db.purgeAllLocalData(); // 🚨 الخطوة الأهم: مسح بيانات الصيدلية السابقة
                 await db.fullSyncFromCloud(pharmacy.id!);
                 await db.registerDevice(pharmacy.id!);
                 loadData();
