@@ -180,27 +180,26 @@ const App: React.FC = () => {
         // --- Real-time System Messages Listener ---
         let channel: any;
         if (supabase) {
-            channel = supabase
-                .channel('global_broadcasts')
-                .on('postgres_changes', { 
-                    event: 'INSERT', 
-                    schema: 'public', 
-                    table: 'system_messages',
-                    filter: 'is_active=eq.true'
-                }, (payload: any) => {
-                    const msg = payload.new;
-                    const type = msg.priority === 'urgent' ? 'error' : 'info';
-                    triggerNotif(`📢 ${msg.content}`, type);
+            channel = supabase.channel('global_broadcasts');
+            channel.on('postgres_changes', { 
+                event: 'INSERT', 
+                schema: 'public', 
+                table: 'system_messages',
+                filter: 'is_active=eq.true'
+            }, (payload: any) => {
+                const msg = payload.new;
+                const type = msg.priority === 'urgent' ? 'error' : 'info';
+                triggerNotif(`📢 ${msg.content}`, type);
 
-                    // Native Browser Notification
-                    if ('Notification' in window && Notification.permission === 'granted') {
-                        new Notification("Raha Pro | تنبيه من الإدارة", {
-                            body: msg.content,
-                            icon: '/logo.png' // Ensure icon exists or use a default
-                        });
-                    }
-                })
-                .subscribe();
+                // Native Browser Notification
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification("Raha Pro | تنبيه من الإدارة", {
+                        body: msg.content,
+                        icon: '/logo.png' // Ensure icon exists or use a default
+                    });
+                }
+            });
+            channel.subscribe();
 
             // Request Notification Permission on mount
             if ('Notification' in window && Notification.permission === 'default') {
