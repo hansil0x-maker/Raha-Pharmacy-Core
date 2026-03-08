@@ -11,27 +11,27 @@ export const supabase = (SUPABASE_URL && SUPABASE_KEY)
     : null;
 
 export class RahaDB extends Dexie {
-    medicines!: Table<Medicine, number>;
-    sales!: Table<Sale, number>;
-    expenses!: Table<Expense, number>;
-    customers!: Table<Customer, number>;
-    notifications!: Table<AppNotification, number>;
+    medicines!: Table<Medicine, string>;
+    sales!: Table<Sale, string>;
+    expenses!: Table<Expense, string>;
+    customers!: Table<Customer, string>;
+    notifications!: Table<AppNotification, string>;
     wantedItems!: Table<WantedItem, string>;
-    pharmacies!: Table<Pharmacy, number>;
+    pharmacies!: Table<Pharmacy, string>;
     pharmacyDevices!: Table<PharmacyDevice, string>;
 
     constructor() {
         super('RahaDB');
 
-        // الإصدار 11: بصمة الجهاز وتتبع النشاط
-        this.version(11).stores({
-            medicines: '++id, pharmacyId, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
-            sales: 'timestamp, pharmacyId, customerName, isReturned',
-            expenses: 'timestamp, pharmacyId, type',
-            customers: '++id, pharmacyId, name',
-            notifications: '++id, pharmacyId, timestamp',
+        // الإصدار 12: معرفات نصية (UUID) لتطابق التخزين السحابي ولتجنب أخطاء المزامنة
+        this.version(12).stores({
+            medicines: 'id, pharmacyId, name, barcode, category, supplier, addedDate, expiryDate, stock, price',
+            sales: 'id, timestamp, pharmacyId, customerName, isReturned',
+            expenses: 'id, timestamp, pharmacyId, type',
+            customers: 'id, pharmacyId, name',
+            notifications: 'id, pharmacyId, timestamp',
             wantedItems: 'id, pharmacyId, itemName, status, createdAt, reminderAt',
-            pharmacies: '++id, pharmacyKey, name',
+            pharmacies: 'id, pharmacyKey, name',
             pharmacyDevices: 'id, pharmacyId, hardwareId'
         });
 
@@ -90,6 +90,7 @@ export class RahaDB extends Dexie {
         this.sales.hook('creating', (primKey, obj) => {
             if (supabase && obj.pharmacyId) {
                 const cloudObj = {
+                    id: obj.id,
                     timestamp: obj.timestamp,
                     pharmacy_id: obj.pharmacyId,
                     total_amount: obj.totalAmount,
@@ -113,6 +114,7 @@ export class RahaDB extends Dexie {
             if (supabase) {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
+                    id: updated.id,
                     timestamp: updated.timestamp,
                     total_amount: updated.totalAmount,
                     discount: updated.discount,
@@ -140,6 +142,7 @@ export class RahaDB extends Dexie {
         this.expenses.hook('creating', (primKey, obj) => {
             if (supabase && obj.pharmacyId) {
                 const cloudObj = {
+                    id: obj.id,
                     timestamp: obj.timestamp,
                     pharmacy_id: obj.pharmacyId,
                     amount: obj.amount,
@@ -154,6 +157,7 @@ export class RahaDB extends Dexie {
             if (supabase) {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
+                    id: updated.id,
                     timestamp: updated.timestamp,
                     pharmacy_id: updated.pharmacyId,
                     amount: updated.amount,
@@ -224,6 +228,7 @@ export class RahaDB extends Dexie {
                 })));
 
                 if (sales) await this.sales.bulkPut(sales.map((s: any) => ({
+                    id: s.id,
                     timestamp: Number(s.timestamp),
                     pharmacyId: s.pharmacy_id,
                     totalAmount: s.total_amount,
@@ -241,6 +246,7 @@ export class RahaDB extends Dexie {
                 })));
 
                 if (expenses) await this.expenses.bulkPut(expenses.map((e: any) => ({
+                    id: e.id,
                     timestamp: Number(e.timestamp),
                     pharmacyId: e.pharmacy_id,
                     amount: e.amount,
@@ -292,6 +298,7 @@ export class RahaDB extends Dexie {
 
         await this.pharmacies.clear();
         await this.pharmacies.add({
+            id: data.id,
             pharmacyKey: data.pharmacy_key,
             name: data.name
         });
@@ -345,6 +352,7 @@ export class RahaDB extends Dexie {
             const sales = await this.sales.toArray();
             if (sales.length > 0) {
                 const cloudSales = sales.map(s => ({
+                    id: s.id,
                     timestamp: s.timestamp,
                     total_amount: s.totalAmount,
                     discount: s.discount,
@@ -367,6 +375,7 @@ export class RahaDB extends Dexie {
             const exps = await this.expenses.toArray();
             if (exps.length > 0) {
                 const cloudExps = exps.map(e => ({
+                    id: e.id,
                     timestamp: e.timestamp,
                     pharmacy_id: e.pharmacyId,
                     amount: e.amount,
@@ -411,6 +420,20 @@ export class RahaDB extends Dexie {
         }
 
         return hardwareId;
+    }
+
+    async checkDeviceBan(pharmacyId: string, hardwareId: string): Promise<boolean> {
+        if (!supabase) return false;
+        try {
+            const { data } = await supabase.from('pharmacy_devices')
+                .select('is_banned')
+                .eq('pharmacy_id', pharmacyId)
+                .eq('hardware_id', hardwareId)
+                .single();
+            return data?.is_banned || false;
+        } catch {
+            return false;
+        }
     }
 
     async smartAddWantedItem(item: Omit<WantedItem, 'id'>, pharmacyId: string) {
