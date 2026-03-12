@@ -88,7 +88,7 @@ const App: React.FC = () => {
         setTimeout(() => setActiveNotif(null), 4000);
         const allN = await db.notifications.orderBy('timestamp').reverse().toArray();
         setNotifs(allN);
-    }, [currentPharmacy?.id]);
+    }, []);
 
     const handleAdminUnlock = useCallback((code: string) => {
         if (!currentPharmacy) return;
@@ -178,49 +178,29 @@ const App: React.FC = () => {
         const rTimer = setTimeout(checkReminders, 2000);
 
         // --- Real-time System Messages Listener ---
-        let channel: any = null;
+        let channel: any;
         if (supabase) {
-            try {
-                channel = supabase.channel('global_broadcasts');
-                if (channel && typeof channel.on === 'function') {
-                    channel.on('postgres_changes', { 
-                        event: 'INSERT', 
-                        schema: 'public', 
-                        table: 'system_messages',
-                        filter: 'is_active=eq.true'
-                    }, (payload: any) => {
-                        try {
-                            const msg = payload?.new;
-                            if (!msg) return;
-                            const type = msg.priority === 'urgent' ? 'error' : 'info';
-                            triggerNotif(`📢 ${msg.content}`, type);
+            channel = supabase
+                .channel('global_broadcasts')
+                .on('postgres_changes', { 
+                    event: 'INSERT', 
+                    schema: 'public', 
+                    table: 'system_messages',
+                    filter: 'is_active=eq.true'
+                }, (payload: any) => {
+                    const msg = payload.new;
+                    const type = msg.priority === 'urgent' ? 'error' : 'info';
+                    triggerNotif(`📢 ${msg.content}`, type);
 
-                            // Native Browser Notification
-                            if ('Notification' in window && Notification.permission === 'granted') {
-                                new Notification("Raha Pro | تنبيه من الإدارة", {
-                                    body: msg.content,
-                                    icon: '/logo.png' // Ensure icon exists or use a default
-                                });
-                            }
-                        } catch (cbErr) {
-                            console.error("Realtime callback error:", cbErr);
-                        }
-                    });
-                    
-                    if (typeof channel.subscribe === 'function') {
-                        channel.subscribe((status: string) => {
-                            if (status === 'SUBSCRIBED') {
-                                console.log('✅ Realtime channel connected');
-                            } else if (status === 'CHANNEL_ERROR') {
-                                console.warn('⚠️ Realtime channel error — table may not exist or RLS blocked');
-                            }
+                    // Native Browser Notification
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification("Raha Pro | تنبيه من الإدارة", {
+                            body: msg.content,
+                            icon: '/logo.png' // Ensure icon exists or use a default
                         });
                     }
-                }
-            } catch (err) {
-                console.error("Failed to initialize Supabase channel:", err);
-                channel = null;
-            }
+                })
+                .subscribe();
 
             // Request Notification Permission on mount
             if ('Notification' in window && Notification.permission === 'default') {
@@ -230,13 +210,7 @@ const App: React.FC = () => {
 
         return () => {
             clearTimeout(rTimer);
-            if (channel && supabase && typeof supabase.removeChannel === 'function') {
-                try {
-                    supabase.removeChannel(channel);
-                } catch (e) {
-                    console.error("Error removing channel:", e);
-                }
-            }
+            if (channel) supabase.removeChannel(channel);
         };
     }, [loadData, triggerNotif]);
 

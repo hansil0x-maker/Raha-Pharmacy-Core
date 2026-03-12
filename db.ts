@@ -10,16 +10,6 @@ export const supabase = (SUPABASE_URL && SUPABASE_KEY)
     ? createClient(SUPABASE_URL, SUPABASE_KEY)
     : null;
 
-// --- معالجة أخطاء الترقية (مثل تغيير المفتاح الأساسي) ---
-Dexie.on('error', (err) => {
-    if (err.name === 'UpgradeError' || (err.message && err.message.includes('primary key'))) {
-        console.warn('تعارض في نسخة قاعدة البيانات المحلية. يتم الآن إعادة التهيئة...');
-        Dexie.delete('RahaDB').then(() => {
-            window.location.reload();
-        });
-    }
-});
-
 export class RahaDB extends Dexie {
     medicines!: Table<Medicine, string>;
     sales!: Table<Sale, string>;

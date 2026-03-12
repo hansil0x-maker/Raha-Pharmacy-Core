@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raha-pro-v6-static';
+const CACHE_NAME = 'raha-pro-v5-static';
 const OFFLINE_URL = '/index.html';
 
 // قائمة الملفات الأساسية للتشغيل (Hard Cache)
