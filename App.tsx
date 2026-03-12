@@ -90,25 +90,36 @@ const App: React.FC = () => {
         setNotifs(allN);
     }, []);
 
-    const handleAdminUnlock = useCallback((code: string) => {
+    const handleAdminUnlock = useCallback(async (code: string) => {
         if (!currentPharmacy) return;
-        const masterKey = currentPharmacy.masterPassword;
-        if (code === masterKey) {
-            setIsAdminUnlocked(true);
-            setIsUnlockSheetOpen(false);
-            setLoginCode('');
-            setUnlockCode('');
-            setUnlockAttempts(0);
-            triggerNotif("تم فك القفل الإداري بنجاح", "info");
-        } else {
-            const nextAttempts = unlockAttempts + 1;
-            setUnlockAttempts(nextAttempts);
-            setUnlockCode('');
-            if (nextAttempts >= 3) {
-                triggerNotif("⚠️ تنبيه: محاولات فك قفل متكررة خاطئة!", "error");
-            } else {
-                triggerNotif(`رمز خاطئ (محاولة ${nextAttempts} من 3)`, "error");
+        // force‑refresh the pharmacy record from the cloud so that any
+        // password changes made via the control panel are reflected
+        // immediately.  we also update the local copy stored in state.
+        try {
+            const fresh = await db.verifyPharmacy(currentPharmacy.pharmacyKey);
+            if (fresh) setCurrentPharmacy(fresh);
+            const masterKey = fresh?.masterPassword || currentPharmacy.masterPassword;
+
+            if (code === masterKey) {
+                setIsAdminUnlocked(true);
+                setIsUnlockSheetOpen(false);
+                setLoginCode('');
+                setUnlockCode('');
+                setUnlockAttempts(0);
+                triggerNotif("تم فك القفل الإداري بنجاح", "info");
+                return;
             }
+        } catch (e) {
+            console.error('Failed to refresh pharmacy before unlock', e);
+        }
+
+        const nextAttempts = unlockAttempts + 1;
+        setUnlockAttempts(nextAttempts);
+        setUnlockCode('');
+        if (nextAttempts >= 3) {
+            triggerNotif("⚠️ تنبيه: محاولات فك قفل متكررة خاطئة!", "error");
+        } else {
+            triggerNotif(`رمز خاطئ (محاولة ${nextAttempts} من 3)`, "error");
         }
     }, [unlockAttempts, triggerNotif, currentPharmacy]);
 
