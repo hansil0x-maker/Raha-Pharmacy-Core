@@ -2,13 +2,13 @@ import { Dexie, type Table } from 'dexie';
 import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmacy, PharmacyDevice } from './types';
 
 // Dynamic Supabase import to avoid initialization issues
-let createClient: typeof import('@supabase/supabase-js').createClient | null = null;
+let createClient: any = null;
 
 // تهيئة عميل Supabase - قناة الاتصال مع سيرفر ألمانيا
 const SUPABASE_URL = 'https://cihficjizojbtnshwtfl.supabase.co';
-const SUPABASE_KEY = (typeof window !== 'undefined' && window.SUPABASE_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpaGZpY2ppem9qYnRuc2h3dGZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwOTEyMDQsImV4cCI6MjA4NDY2NzIwNH0.lta6_WMeXAdvJhZKJd4e-9tSxoZX9DOvuoCPkuSWpO8';
+const SUPABASE_KEY = (typeof window !== 'undefined' && (window as any).SUPABASE_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpaGZpY2ppem9qYnRuc2h3dGZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwOTEyMDQsImV4cCI6MjA4NDY2NzIwNH0.lta6_WMeXAdvJhZKJd4e-9tSxoZX9DOvuoCPkuSWpO8';
 
-export let supabase: ReturnType<typeof createClient> | null = null;
+export let supabase: any = null;
 
 /**
  * Return the shared supabase client, initialising it if necessary.
@@ -35,6 +35,7 @@ export async function initSupabase() {
         console.log('✅ Supabase initialized successfully');
     } catch (e) {
         console.error('❌ Supabase init failed:', e);
+        console.warn('⚠️ Working in offline mode - Supabase not available');
         supabase = null;
     }
 }
@@ -68,17 +69,12 @@ export class RahaDB extends Dexie {
         });
 
         // Error handling for database version conflicts
-        this.on('error', (err) => {
-            if (err.name === 'UpgradeError' || (err.message && err.message.includes('primary key'))) {
-                console.warn('تعارض في نسخة قاعدة البيانات المحلية. يتم الآن إعادة التهيئة...');
-                Dexie.delete('RahaDB').then(() => {
-                    window.location.reload();
-                });
-            }
+        this.on('blocked', () => {
+            console.warn('Database blocked - another tab might be open');
         });
 
         // --- المزامنة التلقائية ---
-        this.medicines.hook('creating', (primKey, obj) => {
+        this.medicines.hook('creating', (primKey: any, obj: Medicine) => {
             if (supabase && obj.pharmacyId) {
                 console.log('🔄 Syncing medicine to cloud:', obj.name);
                 const cloudObj = {
@@ -99,7 +95,7 @@ export class RahaDB extends Dexie {
                     units_per_pkg: obj.unitsPerPkg,
                     min_stock_alert: obj.minStockAlert
                 };
-                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => {
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }: any) => {
                     if (error) {
                         console.error('❌ Supabase Inventory Sync Error:', error);
                     } else {
@@ -112,7 +108,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.medicines.hook('updating', (mods, primKey, obj) => {
+        this.medicines.hook('updating', (mods: any, primKey: any, obj: Medicine) => {
             if (supabase && obj.pharmacyId) {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
@@ -133,7 +129,7 @@ export class RahaDB extends Dexie {
                     units_per_pkg: updated.unitsPerPkg || 1,
                     min_stock_alert: updated.minStockAlert || 0
                 };
-                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => {
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }: any) => {
                     if (error) console.error('❌ Medicine Update Error:', error);
                     else console.log('✅ Medicine updated successfully');
                 }), 0);
@@ -143,7 +139,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.sales.hook('creating', (primKey, obj) => {
+        this.sales.hook('creating', (primKey: any, obj: Sale) => {
             if (supabase && obj.pharmacyId) {
                 console.log('🔄 Syncing sale to cloud:', obj.totalAmount);
                 const cloudObj = {
@@ -160,10 +156,10 @@ export class RahaDB extends Dexie {
                     customer_name: obj.customerName,
                     total_cost: obj.totalCost,
                     profit: obj.profit,
-                    items_json: JSON.parse(obj.itemsJson),
+                    items_json: obj.itemsJson ? JSON.parse(obj.itemsJson) : {},
                     is_returned: obj.isReturned
                 };
-                setTimeout(() => supabase.from('sales').upsert(cloudObj).then(({ error }) => {
+                setTimeout(() => supabase.from('sales').upsert(cloudObj).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Sales Sync Error:', error);
                     else console.log('✅ Sale synced successfully');
                 }), 0);
@@ -172,7 +168,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.sales.hook('updating', (mods, primKey, obj) => {
+        this.sales.hook('updating', (mods: any, primKey: any, obj: Sale) => {
             if (supabase && obj.pharmacyId) {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
@@ -192,7 +188,7 @@ export class RahaDB extends Dexie {
                     items_json: updated.itemsJson,
                     is_returned: updated.isReturned
                 };
-                setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => {
+                setTimeout(() => supabase.from('sales').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Sales Update Error:', error);
                     else console.log('✅ Sale updated successfully');
                 }), 0);
@@ -201,9 +197,9 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.sales.hook('deleting', (primKey, obj) => {
+        this.sales.hook('deleting', (primKey: any, obj: Sale) => {
             if (supabase && obj.pharmacyId) {
-                setTimeout(() => supabase.from('sales').delete().eq('timestamp', obj.timestamp).then(({ error }) => {
+                setTimeout(() => supabase.from('sales').delete().eq('timestamp', obj.timestamp).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Sales Delete Error:', error);
                     else console.log('✅ Sale deleted successfully');
                 }), 0);
@@ -212,7 +208,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.expenses.hook('creating', (primKey, obj) => {
+        this.expenses.hook('creating', (primKey: any, obj: Expense) => {
             if (supabase && obj.pharmacyId) {
                 console.log('🔄 Syncing expense to cloud:', obj.amount);
                 const cloudObj = {
@@ -223,7 +219,7 @@ export class RahaDB extends Dexie {
                     description: obj.description,
                     type: obj.type
                 };
-                setTimeout(() => supabase.from('expenses').upsert(cloudObj).then(({ error }) => {
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Expenses Sync Error:', error);
                     else console.log('✅ Expense synced successfully');
                 }), 0);
@@ -232,7 +228,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.expenses.hook('updating', (mods, primKey, obj) => {
+        this.expenses.hook('updating', (mods: any, primKey: any, obj: Expense) => {
             if (supabase && obj.pharmacyId) {
                 const updated = { ...obj, ...mods };
                 const cloudObj = {
@@ -243,7 +239,7 @@ export class RahaDB extends Dexie {
                     description: updated.description || '',
                     type: updated.type
                 };
-                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }) => {
+                setTimeout(() => supabase.from('expenses').upsert(cloudObj, { onConflict: 'timestamp' }).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Expense Update Error:', error);
                     else console.log('✅ Expense updated successfully');
                 }), 0);
@@ -252,9 +248,9 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.expenses.hook('deleting', (primKey, obj) => {
+        this.expenses.hook('deleting', (primKey: any, obj: Expense) => {
             if (supabase && obj.pharmacyId) {
-                setTimeout(() => supabase.from('expenses').delete().eq('timestamp', obj.timestamp).then(({ error }) => {
+                setTimeout(() => supabase.from('expenses').delete().eq('timestamp', obj.timestamp).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Expense Delete Error:', error);
                     else console.log('✅ Expense deleted successfully');
                 }), 0);
@@ -263,9 +259,9 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.medicines.hook('deleting', (primKey, obj) => {
+        this.medicines.hook('deleting', (primKey: any, obj: Medicine) => {
             if (supabase && obj.pharmacyId) {
-                setTimeout(() => supabase.from('medicines').delete().eq('barcode', obj.barcode).then(({ error }) => {
+                setTimeout(() => supabase.from('medicines').delete().eq('id', obj.id).then(({ error }: any) => {
                     if (error) console.error('❌ Supabase Inventory Delete Error:', error);
                     else console.log('✅ Medicine deleted successfully');
                 }), 0);
@@ -274,7 +270,7 @@ export class RahaDB extends Dexie {
             }
         });
 
-        this.wantedItems.hook('creating', (primKey, obj) => {
+        this.wantedItems.hook('creating', (primKey: any, obj: any) => {
             if (supabase && obj.pharmacyId) {
                 console.log('🔄 Syncing wanted item to cloud:', obj.itemName);
                 const cloudObj = {
@@ -287,7 +283,7 @@ export class RahaDB extends Dexie {
                     created_at: new Date(obj.createdAt).toISOString(),
                     reminder_at: obj.reminderAt
                 };
-                setTimeout(() => supabase.from('wanted_list').upsert(cloudObj).then(({ error }) => {
+                setTimeout(() => supabase.from('wanted_list').upsert(cloudObj).then(({ error }: any) => {
                     if (error) console.error('❌ WantedList Sync Error:', error);
                     else console.log('✅ Wanted item synced successfully');
                 }), 0);
@@ -634,7 +630,7 @@ export class RahaDB extends Dexie {
                     notes: newItem.notes,
                     request_count: newItem.requestCount,
                     status: newItem.status,
-                    created_at: new Date(newItem.createdAt).toISOString()
+                    created_at: new Date(newItem.createdAt || Date.now()).toISOString()
                 });
             }
             return newItem;
