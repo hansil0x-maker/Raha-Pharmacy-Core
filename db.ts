@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 // تهيئة عميل Supabase - قناة الاتصال مع سيرفر ألمانيا
 const SUPABASE_URL = 'https://cihficjizojbtnshwtfl.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_9Nmdm3LJUHK1fBF0ihj38g_ophBRHyD';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpaGZpY2ppem9qYnRuc2h3dGZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwOTEyMDQsImV4cCI6MjA4NDY2NzIwNH0.lta6_WMeXAdvJhZKJd4e-9tSxoZX9DOvuoCPkuSWpO8';
 
 export const supabase = (SUPABASE_URL && SUPABASE_KEY)
     ? createClient(SUPABASE_URL, SUPABASE_KEY)
