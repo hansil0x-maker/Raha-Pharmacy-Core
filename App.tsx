@@ -4,7 +4,7 @@ import {
     CheckCircle2, TrendingUp, CreditCard, Wallet, UserMinus,
     ArrowRight, Minus, Edit3, Receipt, Calendar,
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
-    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
+    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered, Megaphone
 } from 'lucide-react';
 import { db, supabase } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
@@ -26,6 +26,7 @@ const App: React.FC = () => {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [notifs, setNotifs] = useState<AppNotification[]>([]);
     const [wantedItems, setWantedItems] = useState<WantedItem[]>([]);
+    const [systemMessages, setSystemMessages] = useState<any[]>([]);
     const [activeNotif, setActiveNotif] = useState<AppNotification | null>(null);
     const [isSuspended, setIsSuspended] = useState(false);
     const [activationData, setActivationData] = useState({ key: '', password: '' });
@@ -143,6 +144,7 @@ const App: React.FC = () => {
         try {
             const { data: messages } = await supabase.from('system_messages').select('*').eq('is_active', true);
             if (messages && messages.length > 0) {
+                setSystemMessages(messages);
                 const newNotifs = messages.map(msg => ({
                     id: `sys-${msg.id}`,
                     type: msg.priority === 'urgent' ? 'error' : 'info',
@@ -956,6 +958,22 @@ const App: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* System Messages Banner */}
+            {systemMessages.filter(m => m.priority === 'urgent').map(m => (
+                <div key={m.id} className="fixed top-20 left-1/2 -translate-x-1/2 z-[190] w-full max-w-md animate-in slide-in-from-top-full duration-500">
+                    <div className="bg-red-600 text-white p-4 rounded-2xl shadow-2xl border border-red-500 flex items-center gap-3">
+                        <Megaphone size={24} />
+                        <div className="flex-grow">
+                            <div className="font-bold text-sm">تنبيه عاجل من الإدارة</div>
+                            <p className="text-xs mt-1">{m.content}</p>
+                        </div>
+                        <button onClick={() => setSystemMessages(prev => prev.filter(x => x.id !== m.id))} className="text-red-200 hover:text-white">
+                            <X size={16} />
+                        </button>
+                    </div>
+                </div>
+            ))}
             <header className="bg-white px-6 pt-10 pb-4 shadow-sm z-30 border-b border-slate-100 shrink-0">
                 <div className="flex justify-between items-center mb-6">
                     <button
