@@ -138,6 +138,28 @@ const App: React.FC = () => {
         setCustomers(c);
         setNotifs(n);
         setWantedItems(w);
+
+        // Sync system messages from cloud and add as notifications
+        try {
+            const { data: messages } = await supabase.from('system_messages').select('*').eq('is_active', true);
+            if (messages && messages.length > 0) {
+                const newNotifs = messages.map(msg => ({
+                    id: `sys-${msg.id}`,
+                    type: msg.priority === 'urgent' ? 'error' : 'info',
+                    message: msg.content,
+                    timestamp: new Date(msg.created_at).getTime(),
+                    read: false
+                }));
+                // Add only new messages to avoid duplicates
+                setNotifs(prev => {
+                    const existingIds = new Set(prev.map(n => n.id));
+                    const filteredNew = newNotifs.filter(n => !existingIds.has(n.id));
+                    return [...filteredNew, ...prev];
+                });
+            }
+        } catch (err) {
+            console.error('Failed to sync system messages:', err);
+        }
     }, []);
 
     const checkStatus = useCallback(async () => {
