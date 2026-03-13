@@ -38,6 +38,7 @@ export class RahaDB extends Dexie {
         // --- المزامنة التلقائية ---
         this.medicines.hook('creating', (primKey, obj) => {
             if (supabase && obj.pharmacyId) {
+                console.log('Syncing medicine to cloud:', obj);
                 const cloudObj = {
                     id: obj.id,
                     pharmacy_id: obj.pharmacyId,
@@ -56,8 +57,13 @@ export class RahaDB extends Dexie {
                     units_per_pkg: obj.unitsPerPkg,
                     min_stock_alert: obj.minStockAlert
                 };
-                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => error && console.error('Supabase Inventory Sync Error:', error)), 0);
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }) => {
+                    if (error) console.error('Supabase Inventory Sync Error:', error);
+                    else console.log('Medicine synced successfully');
+                }), 0);
                 this.trackActivity(obj.pharmacyId);
+            } else {
+                console.warn('Supabase not ready or no pharmacyId for medicine sync');
             }
         });
 
