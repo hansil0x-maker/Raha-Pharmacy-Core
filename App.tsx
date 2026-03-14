@@ -4,7 +4,7 @@ import {
     CheckCircle2, TrendingUp, CreditCard, Wallet, UserMinus,
     ArrowRight, Minus, Edit3, Receipt, Calendar,
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
-    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered, Megaphone
+    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
 } from 'lucide-react';
 import { db, supabase } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
@@ -26,7 +26,6 @@ const App: React.FC = () => {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [notifs, setNotifs] = useState<AppNotification[]>([]);
     const [wantedItems, setWantedItems] = useState<WantedItem[]>([]);
-    const [systemMessages, setSystemMessages] = useState<any[]>([]);
     const [activeNotif, setActiveNotif] = useState<AppNotification | null>(null);
     const [isSuspended, setIsSuspended] = useState(false);
     const [activationData, setActivationData] = useState({ key: '', password: '' });
@@ -89,38 +88,27 @@ const App: React.FC = () => {
         setTimeout(() => setActiveNotif(null), 4000);
         const allN = await db.notifications.orderBy('timestamp').reverse().toArray();
         setNotifs(allN);
-    }, []);
+    }, [currentPharmacy]);
 
-    const handleAdminUnlock = useCallback(async (code: string) => {
+    const handleAdminUnlock = useCallback((code: string) => {
         if (!currentPharmacy) return;
-        // force‑refresh the pharmacy record from the cloud so that any
-        // password changes made via the control panel are reflected
-        // immediately.  we also update the local copy stored in state.
-        try {
-            const fresh = await db.verifyPharmacy(currentPharmacy.pharmacyKey);
-            if (fresh) setCurrentPharmacy(fresh);
-            const masterKey = fresh?.masterPassword || currentPharmacy.masterPassword;
-
-            if (code === masterKey) {
-                setIsAdminUnlocked(true);
-                setIsUnlockSheetOpen(false);
-                setLoginCode('');
-                setUnlockCode('');
-                setUnlockAttempts(0);
-                triggerNotif("تم فك القفل الإداري بنجاح", "info");
-                return;
-            }
-        } catch (e) {
-            console.error('Failed to refresh pharmacy before unlock', e);
-        }
-
-        const nextAttempts = unlockAttempts + 1;
-        setUnlockAttempts(nextAttempts);
-        setUnlockCode('');
-        if (nextAttempts >= 3) {
-            triggerNotif("⚠️ تنبيه: محاولات فك قفل متكررة خاطئة!", "error");
+        const masterKey = currentPharmacy.masterPassword;
+        if (code === masterKey) {
+            setIsAdminUnlocked(true);
+            setIsUnlockSheetOpen(false);
+            setLoginCode('');
+            setUnlockCode('');
+            setUnlockAttempts(0);
+            triggerNotif("تم فك القفل الإداري بنجاح", "info");
         } else {
-            triggerNotif(`رمز خاطئ (محاولة ${nextAttempts} من 3)`, "error");
+            const nextAttempts = unlockAttempts + 1;
+            setUnlockAttempts(nextAttempts);
+            setUnlockCode('');
+            if (nextAttempts >= 3) {
+                triggerNotif("⚠️ تنبيه: محاولات فك قفل متكررة خاطئة!", "error");
+            } else {
+                triggerNotif(`رمز خاطئ (محاولة ${nextAttempts} من 3)`, "error");
+            }
         }
     }, [unlockAttempts, triggerNotif, currentPharmacy]);
 
@@ -139,29 +127,6 @@ const App: React.FC = () => {
         setCustomers(c);
         setNotifs(n);
         setWantedItems(w);
-
-        // Sync system messages from cloud and add as notifications
-        try {
-            const { data: messages } = await supabase.from('system_messages').select('*').eq('is_active', true);
-            if (messages && messages.length > 0) {
-                setSystemMessages(messages);
-                const newNotifs = messages.map(msg => ({
-                    id: `sys-${msg.id}`,
-                    type: msg.priority === 'urgent' ? 'error' : 'info',
-                    message: msg.content,
-                    timestamp: new Date(msg.created_at).getTime(),
-                    read: false
-                }));
-                // Add only new messages to avoid duplicates
-                setNotifs(prev => {
-                    const existingIds = new Set(prev.map(n => n.id));
-                    const filteredNew = newNotifs.filter(n => !existingIds.has(n.id));
-                    return [...filteredNew, ...prev];
-                });
-            }
-        } catch (err) {
-            console.error('Failed to sync system messages:', err);
-        }
     }, []);
 
     const checkStatus = useCallback(async () => {
@@ -172,6 +137,20 @@ const App: React.FC = () => {
         const initAuth = async () => {
             const saved = await db.pharmacies.toCollection().first();
             if (saved) {
+                // التحقق من أن Master Password لا يزال صالحاً (90 يوم للتحقق من الملكية)
+                const lastActive = saved.lastActive ? new Date(saved.lastActive).getTime() : 0;
+                const now = Date.now();
+                const masterPasswordTimeout = 90 * 24 * 60 * 60 * 1000; // 90 يوم
+                
+                // إذا مرت 90 يوم، نطلب Master Password للتحقق من الملكية فقط
+                if (now - lastActive > masterPasswordTimeout) {
+                    setCurrentPharmacy(saved);
+                    setIsAuthenticated(false);
+                    // يمكن إضافة رسالة: "يرجى إدخال Master Password للتحقق من الملكية"
+                    return;
+                }
+                
+                // بدون أي timeout للاستخدام - النظام يعمل دائماً
                 setCurrentPharmacy(saved);
                 setIsAuthenticated(true);
                 loadData();
@@ -212,40 +191,8 @@ const App: React.FC = () => {
         };
         const rTimer = setTimeout(checkReminders, 2000);
 
-        // --- Real-time System Messages Listener ---
-        let channel: any;
-        if (supabase) {
-            channel = supabase
-                .channel('global_broadcasts')
-                .on('postgres_changes', { 
-                    event: 'INSERT', 
-                    schema: 'public', 
-                    table: 'system_messages',
-                    filter: 'is_active=eq.true'
-                }, (payload: any) => {
-                    const msg = payload.new;
-                    const type = msg.priority === 'urgent' ? 'error' : 'info';
-                    triggerNotif(`📢 ${msg.content}`, type);
-
-                    // Native Browser Notification
-                    if ('Notification' in window && Notification.permission === 'granted') {
-                        new Notification("Raha Pro | تنبيه من الإدارة", {
-                            body: msg.content,
-                            icon: '/logo.png' // Ensure icon exists or use a default
-                        });
-                    }
-                })
-                .subscribe();
-
-            // Request Notification Permission on mount
-            if ('Notification' in window && Notification.permission === 'default') {
-                Notification.requestPermission();
-            }
-        }
-
         return () => {
             clearTimeout(rTimer);
-            if (channel) supabase.removeChannel(channel);
         };
     }, [loadData, triggerNotif]);
 
@@ -958,22 +905,6 @@ const App: React.FC = () => {
                     </div>
                 </div>
             )}
-
-            {/* System Messages Banner */}
-            {systemMessages.filter(m => m.priority === 'urgent').map(m => (
-                <div key={m.id} className="fixed top-20 left-1/2 -translate-x-1/2 z-[190] w-full max-w-md animate-in slide-in-from-top-full duration-500">
-                    <div className="bg-red-600 text-white p-4 rounded-2xl shadow-2xl border border-red-500 flex items-center gap-3">
-                        <Megaphone size={24} />
-                        <div className="flex-grow">
-                            <div className="font-bold text-sm">تنبيه عاجل من الإدارة</div>
-                            <p className="text-xs mt-1">{m.content}</p>
-                        </div>
-                        <button onClick={() => setSystemMessages(prev => prev.filter(x => x.id !== m.id))} className="text-red-200 hover:text-white">
-                            <X size={16} />
-                        </button>
-                    </div>
-                </div>
-            ))}
             <header className="bg-white px-6 pt-10 pb-4 shadow-sm z-30 border-b border-slate-100 shrink-0">
                 <div className="flex justify-between items-center mb-6">
                     <button
