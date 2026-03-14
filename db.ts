@@ -404,12 +404,14 @@ export class RahaDB extends Dexie {
     }
 
     async verifyPharmacy(key: string) {
-        if (!supabase) {
-            console.warn('⚠️ Supabase not available for pharmacy verification');
-            return null;
-        }
         console.log('🔍 Verifying pharmacy with key:', key);
         try {
+            const supabase = await getSupabase();
+            if (!supabase) {
+                console.warn('⚠️ Supabase not available for pharmacy verification');
+                return null;
+            }
+            
             const { data, error } = await supabase.from('pharmacies').select('*').eq('pharmacy_key', key).single();
             if (error || !data) {
                 console.error('❌ Pharmacy verification failed:', error);

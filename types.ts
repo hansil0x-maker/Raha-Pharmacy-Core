@@ -1,86 +1,98 @@
-export interface Pharmacy {
-    id: string;
-    pharmacyKey: string;
-    name: string;
-    masterPassword: string;
-    status: 'active' | 'suspended';
-    createdAt: number;
-}
-
 export interface Medicine {
-    id?: number;
-    pharmacyId?: string;
-    name: string;
-    barcode: string;
-    price: number;
-    costPrice: number;
-    stock: number;
-    category: string;
-    expiryDate: string;
-    supplier?: string;
-    supplierPhone?: string;
-    addedDate?: number | string;
-    usageCount?: number;
-    lastSold?: number;
-    unitsPerPkg?: number;
-    minStockAlert?: number;
-}
-
-export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications';
-
-export interface CartItem {
-    medicine: Medicine;
-    quantity: number;
+  id: string;
+  pharmacyId: string;
+  name: string;
+  barcode?: string;
+  price?: number;
+  costPrice?: number;
+  stock?: number;
+  category?: string;
+  expiryDate?: number | null;
+  supplier?: string;
+  supplierPhone?: string;
+  addedDate?: number;
+  usageCount?: number;
+  lastSold?: number | null;
+  unitsPerPkg?: number;
+  minStockAlert?: number;
 }
 
 export interface Sale {
-    id?: number;
-    pharmacyId?: string;
-    totalAmount: number;
-    discount: number;
-    netAmount: number;
-    cashAmount: number;
-    bankAmount: number;
-    debtAmount: number;
-    bankTrxId: string;
-    customerName: string;
-    totalCost: number;
-    profit: number;
-    timestamp: number;
-    itemsJson: string;
-    isReturned: boolean;
+  id: string;
+  timestamp: number;
+  pharmacyId: string;
+  totalAmount?: number;
+  discount?: number;
+  netAmount?: number;
+  cashAmount?: number;
+  bankAmount?: number;
+  debtAmount?: number;
+  bankTrxId?: string;
+  customerName?: string;
+  totalCost?: number;
+  profit?: number;
+  itemsJson?: string;
+  isReturned?: boolean;
 }
 
 export interface Expense {
-    id?: number;
-    pharmacyId?: string;
-    description: string;
-    amount: number;
-    type: string;
-    timestamp: number;
+  id: string;
+  timestamp: number;
+  pharmacyId: string;
+  amount: number;
+  description?: string;
+  type?: string;
 }
 
 export interface Customer {
-    id?: number;
-    pharmacyId?: string;
-    name: string;
+  id: string;
+  pharmacyId: string;
+  name: string;
+  phone?: string;
+  address?: string;
 }
 
 export interface AppNotification {
-    id?: number;
-    pharmacyId?: string;
-    message: string;
-    type: 'warning' | 'error' | 'info';
-    timestamp: number;
+  id: string;
+  pharmacyId: string;
+  message: string;
+  type?: string;
+  timestamp: number;
 }
 
 export interface WantedItem {
-    id?: string; // UUID from cloud
-    pharmacyId?: string;
-    itemName: string;
-    notes?: string;
-    requestCount: number;
-    status: 'pending' | 'ordered' | 'received' | 'completed' | 'archived';
-    createdAt: number;
-    reminderAt?: number;
+  id: string;
+  pharmacyId: string;
+  itemName: string;
+  notes?: string;
+  requestCount?: number;
+  status?: string;
+  createdAt?: number;
+  reminderAt?: number | null;
 }
+
+export interface Pharmacy {
+  id: string;
+  pharmacyKey: string;
+  name: string;
+  masterPassword?: string;
+  status?: 'active' | 'suspended' | string;
+  lastActive?: number | null;
+  createdAt?: number;
+}
+
+export interface PharmacyDevice {
+  id: string;
+  pharmacyId: string;
+  hardwareId: string;
+  deviceName?: string;
+  lastLogin?: number | null;
+  isBanned?: boolean;
+}
+
+export interface CartItem {
+  medicine: Medicine;
+  quantity: number;
+}
+
+export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications';

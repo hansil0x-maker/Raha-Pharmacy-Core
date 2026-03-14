@@ -162,6 +162,8 @@ const App: React.FC = () => {
                 console.log('🔍 Auto-login successful');
                 setCurrentPharmacy(saved);
                 setIsAuthenticated(true);
+                
+                // فقط تحميل البيانات المحلية، لا مزامنة تلقائية
                 loadData();
 
                 // Periodic status check
@@ -247,60 +249,36 @@ const App: React.FC = () => {
         setSelectionTimer(null);
     };
 
-
     // Initial Load & Auth-Guard Sync (Raha Cloud Engine)
     useEffect(() => {
-        if (isAuthenticated) {
+        if (isAuthenticated && currentPharmacy?.id) {
             const runInitialSync = async () => {
                 if (navigator.onLine) {
                     setIsSyncing(true);
-                    const res = await db.fullSyncFromCloud(currentPharmacy?.id!);
-                    if (res.success) triggerNotif(`تمت مزامنة البيانات من السحاب بنجاح`, "info");
-                    setIsSyncing(false);
+                    try {
+                        const res = await db.fullSyncFromCloud(currentPharmacy.id);
+                        if (res.success) triggerNotif(`تمت مزامنة البيانات من السحاب بنجاح`, "info");
+                        else triggerNotif(`فشلت المزامنة`, "error");
+                    } catch (err) {
+                        console.error('Sync error:', err);
+                        triggerNotif(`فشل الاتصال بالسحابة`, "error");
+                    }
+                } else {
+                    triggerNotif(`لا يوجد اتصال بالإنترنت`, "error");
                 }
                 loadData();
+                setIsSyncing(false);
             };
             runInitialSync();
         }
-    }, [isAuthenticated, loadData, triggerNotif]);
+    }, [isAuthenticated, currentPharmacy?.id, loadData, triggerNotif]);
 
     // Smart Business Health Analyzer - نظام التنبيهات الذكي
     const analyzeBusinessHealth = useCallback(async () => {
         const alerts: AppNotification[] = [];
         const today = new Date().toISOString().split('T')[0];
-        const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
 
         // 1. فحص المخزون المنخفض والمنتهي
-        medicines.forEach(med => {
-            // تنبيه المخزون المنخفض
-            if (med.stock > 0 && med.stock <= 10) {
-                alerts.push({
-                    message: `⚠️ مخزون منخفض: ${med.name} (${med.stock} فقط)`,
-                    type: 'warning',
-                    timestamp: Date.now()
-                });
-            }
-
-            // تنبيه نفاد المخزون
-            if (med.stock <= 0) {
-                alerts.push({
-                    message: `🚨 نفد المخزون: ${med.name}`,
-                    type: 'error',
-                    timestamp: Date.now()
-                });
-            }
-
-            // تنبيه انتهاء الصلاحية
-            if (med.expiryDate < today) {
-                alerts.push({
-                    message: `❌ منتهي الصلاحية: ${med.name} (${med.expiryDate})`,
-                    type: 'error',
-                    timestamp: Date.now()
-                });
-            }
-        });
-
-        // 2. فحص الأدوية الراكدة (لم تُبع منذ 60 يوم)
         const stagnantMeds = medicines.filter(med => {
             if (med.stock <= 0) return false;
             const sixtyDaysAgo = Date.now() - (60 * 24 * 60 * 60 * 1000);
@@ -517,7 +495,7 @@ const App: React.FC = () => {
         return { list: filteredExps, totalExp, totalCost, salesProfit, netProfit };
     }, [expenses, salesHistory, expStartDate, expEndDate]);
 
-    const inlineUpdate = useCallback(async (id: string, field: string, value: any) => {
+    const inlineUpdate = useCallback(async (id: '00000000-0000-0000-0000-000000000001', field: string, value: any) => {
         const val = (field === 'price' || field === 'costPrice' || field === 'stock') ? parseFloat(value) : value;
         await db.medicines.update(id, { [field]: val });
         loadData();
@@ -796,6 +774,13 @@ const App: React.FC = () => {
                     return;
                 }
 
+                // تجاهل أخطاء IndexedDB مؤقتاً
+                try {
+                    await db.purgeAllLocalData();
+                } catch (err) {
+                    console.warn('⚠️ IndexedDB purge failed, continuing...');
+                }
+
                 if (pharmacy.status === 'suspended') {
                     setIsSuspended(true);
                     triggerNotif("هذا الحساب معطل حالياً", "error");
@@ -807,10 +792,30 @@ const App: React.FC = () => {
                 localStorage.setItem('raha_pro_activated', 'true');
                 triggerNotif(`مرحباً بك في ${pharmacy.name}`, "info");
 
-                await db.purgeAllLocalData(); // 🚨 الخطوة الأهم: مسح بيانات الصيدلية السابقة
-                await db.fullSyncFromCloud(pharmacy.id!);
-                await db.registerDevice(pharmacy.id!);
-                loadData();
+                // التحقق من المزامنة - إذا فشلت، لا ندخل المستخدم
+                try {
+                    console.log('🔄 Starting critical sync...');
+                    await db.purgeAllLocalData();
+                    const syncResult = await db.fullSyncFromCloud(pharmacy.id!);
+                    
+                    if (!syncResult) {
+                        throw new Error('Sync returned false');
+                    }
+                    
+                    await db.registerDevice(pharmacy.id!);
+                    console.log('✅ All sync operations successful');
+                    loadData();
+                    
+                } catch (err) {
+                    console.error('❌ Critical sync failed:', err);
+                    triggerNotif("فشل المزامنة - لا يمكن الدخول لحماية البيانات", "error");
+                    
+                    // إرجاع المستخدم لشاشة الدخول
+                    setCurrentPharmacy(null);
+                    setIsAuthenticated(false);
+                    localStorage.removeItem('raha_pro_activated');
+                    return;
+                }
             } else {
                 triggerNotif("رمز الصيدلية غير صحيح أو غير موجود", "error");
             }
