@@ -95,11 +95,13 @@ export class RahaDB extends Dexie {
                     units_per_pkg: obj.unitsPerPkg,
                     min_stock_alert: obj.minStockAlert
                 };
-                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error }: any) => {
+                setTimeout(() => supabase.from('medicines').upsert(cloudObj).then(({ error, data }: any) => {
                     if (error) {
                         console.error('❌ Supabase Inventory Sync Error:', error);
+                        console.error('❌ Failed data:', cloudObj);
                     } else {
-                        console.log('✅ Medicine synced successfully');
+                        console.log('✅ Medicine synced successfully:', data);
+                        console.log('✅ Cloud ID:', data?.[0]?.id);
                     }
                 }), 0);
                 this.trackActivity(obj.pharmacyId);
