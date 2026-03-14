@@ -778,8 +778,12 @@ const App: React.FC = () => {
             const pharmacy = await db.verifyPharmacy(key);
             if (pharmacy) {
                 // التحقق من كلمة المرور الرئيسية عند التفعيل
+                console.log('🔍 Checking password:', password);
+                console.log('🔍 Stored password:', pharmacy.masterPassword);
+                
                 if (pharmacy.masterPassword !== password) {
                     triggerNotif("كلمة المرور الرئيسية غير صحيحة", "error");
+                    console.log('❌ Password mismatch!');
                     return;
                 }
 
