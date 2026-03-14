@@ -137,20 +137,29 @@ const App: React.FC = () => {
         const initAuth = async () => {
             const saved = await db.pharmacies.toCollection().first();
             if (saved) {
+                console.log('🔍 Found saved pharmacy:', saved.pharmacyKey);
+                
                 // التحقق من أن Master Password لا يزال صالحاً (90 يوم للتحقق من الملكية)
-                const lastActive = saved.lastActive ? new Date(saved.lastActive).getTime() : 0;
                 const now = Date.now();
+                const lastActive = saved.lastActive ? new Date(saved.lastActive).getTime() : now;
                 const masterPasswordTimeout = 90 * 24 * 60 * 60 * 1000; // 90 يوم
+                
+                console.log('🔍 Time since last active:', Math.floor((now - lastActive) / (1000 * 60 * 60 * 24)), 'days');
                 
                 // إذا مرت 90 يوم، نطلب Master Password للتحقق من الملكية فقط
                 if (now - lastActive > masterPasswordTimeout) {
+                    console.log('🔍 90 days passed, requiring Master Password');
                     setCurrentPharmacy(saved);
                     setIsAuthenticated(false);
                     // يمكن إضافة رسالة: "يرجى إدخال Master Password للتحقق من الملكية"
                     return;
                 }
                 
+                // تحديث lastActive للاستخدام الحالي
+                await db.pharmacies.update(saved.id!, { lastActive: Date.now() });
+                
                 // بدون أي timeout للاستخدام - النظام يعمل دائماً
+                console.log('🔍 Auto-login successful');
                 setCurrentPharmacy(saved);
                 setIsAuthenticated(true);
                 loadData();
@@ -757,7 +766,7 @@ const App: React.FC = () => {
         // منطق الدخول الخاص (الرمز المزدوج للاختبار)
         if (key === 'raha0909' && password === 'raha0909') {
             const trialPharmacy: Pharmacy = {
-                id: 'trial-id',
+                id: '00000000-0000-0000-0000-000000000001', // UUID صالح
                 pharmacyKey: 'TRIAL',
                 name: 'نسخة التجربة والاختبار',
                 masterPassword: 'raha0909',
