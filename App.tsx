@@ -6,7 +6,7 @@ import {
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
     ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
 } from 'lucide-react';
-import { db, supabase } from './db';
+import { db } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
 
 // Supabase Configuration has been moved to db.ts
@@ -637,74 +637,79 @@ const App: React.FC = () => {
         setCart(newCart);
     }, [cart, setCart]);
 
-    const handleSale = useCallback(async () => {
-        const itemsArray = Array.from(cart.values()) as CartItem[];
-        const cartTotalValue = itemsArray.reduce((s: number, i) => s + (i.medicine.price * i.quantity), 0);
-        const netValue = cartTotalValue - (parseFloat(payData.discount) || 0);
-        const paidValue = (parseFloat(payData.cash) || 0) + (parseFloat(payData.bank) || 0) + (parseFloat(payData.debt) || 0);
-        const totalCostValue = itemsArray.reduce((s: number, i) => {
-            const m = i.medicine;
-            const unitCost = (m.unitsPerPkg && m.unitsPerPkg > 0) ? (m.costPrice / m.unitsPerPkg) : m.costPrice;
-            return s + (unitCost * i.quantity);
-        }, 0);
+const handleSale = useCallback(async () => {
+    if (cart.length === 0) return;
+    
+    try {
+        const itemsArray = cart.map(item => ({
+            ...item,
+            costPrice: item.costPrice || 0,
+            totalCost: (item.costPrice || 0) * item.quantity,
+            profit: (item.price - (item.costPrice || 0)) * item.quantity
+        }));
 
-        if (Math.abs(paidValue - netValue) > 0.1) {
-            triggerNotif("توزيع المبالغ غير صحيح", "error");
-            return;
+        const totalCostValue = itemsArray.reduce((acc, item) => acc + item.totalCost, 0);
+        const netValue = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) - (Number(payData.discount) || 0);
+        
+        if (totalCostValue > netValue) {
+            throw new Error("⚠️ خطأ في البيانات: تكلفة الصنف أعلى من سعر البيع (ربح سالب)");
         }
-
-        try {
-            if (totalCostValue > netValue) {
-                throw new Error("⚠️ خطأ في البيانات: تكلفة الصنف أعلى من سعر البيع (ربح سالب)");
-            }
-            // @ts-ignore
-            await db.transaction('rw', [db.medicines, db.sales, db.customers], async () => {
-                for (const item of itemsArray) {
-                    const newStock = item.medicine.stock - item.quantity;
-                    await db.medicines.update(item.medicine.id!, {
-                        stock: newStock,
-                        usageCount: (item.medicine.usageCount || 0) + item.quantity,
+        
+        // @ts-ignore
+        await db.transaction('rw', [db.medicines, db.sales, db.customers], async () => {
+            for (const item of itemsArray) {
+                const medicine = await db.medicines.get(item.id);
+                if (medicine) {
+                    if (medicine.stock < item.quantity) {
+                        throw new Error(`⚠️ المخزون غير كافٍ لـ ${medicine.name} (${medicine.stock} متاح)`);
+                    }
+                    await db.medicines.update(item.id, {
+                        stock: medicine.stock - item.quantity,
+                        usageCount: (medicine.usageCount || 0) + item.quantity,
                         lastSold: Date.now()
                     });
-
-                    // Stock Alert Logic
-                    if (item.medicine.minStockAlert && newStock <= item.medicine.minStockAlert) {
-                        triggerNotif(`⚠️ تنبيه: مخزون ${item.medicine.name} منخفض جداً (${newStock})`, "warning");
-                    }
                 }
-                if (payData.cust) {
-                    const existing = await db.customers.where('name').equals(payData.cust).and(c => c.pharmacyId === currentPharmacy?.id).first();
-                    if (!existing) await db.customers.add({ id: crypto.randomUUID(), pharmacyId: currentPharmacy?.id, name: payData.cust });
-                }
-                await db.sales.add({
-                    id: crypto.randomUUID(),
-                    pharmacyId: currentPharmacy?.id,
-                    totalAmount: cartTotalValue,
-                    discount: parseFloat(payData.discount) || 0,
-                    netAmount: netValue,
-                    cashAmount: parseFloat(payData.cash) || 0,
-                    bankAmount: parseFloat(payData.bank) || 0,
-                    debtAmount: parseFloat(payData.debt) || 0,
-                    bankTrxId: payData.trx,
-                    customerName: payData.cust,
-                    totalCost: totalCostValue,
-                    profit: netValue - totalCostValue as number,
-                    timestamp: Date.now(),
-                    itemsJson: JSON.stringify(itemsArray)
-                });
+            }
+            
+            const saleId = crypto.randomUUID();
+            await db.sales.add({
+                id: saleId,
+                timestamp: Date.now(),
+                pharmacyId: currentPharmacy?.id || '',
+                itemsJson: JSON.stringify(itemsArray),
+                totalAmount: cart.reduce((acc, item) => acc + (item.price * item.quantity), 0),
+                discount: Number(payData.discount) || 0,
+                netAmount: netValue,
+                cashAmount: Number(payData.cash) || 0,
+                bankAmount: Number(payData.bank) || 0,
+                debtAmount: Number(payData.debt) || 0,
+                bankTrxId: payData.trx || '',
+                customerName: payData.cust || '',
+                totalCost: totalCostValue,
+                profit: netValue - totalCostValue,
+                isReturned: false
             });
-        } catch (error: any) {
-            console.error('Sale Execution Error:', error);
-            const msg = error instanceof Error ? error.message : "خطأ في تنفيذ العملية";
-            triggerNotif(msg, "error");
-        }
-
-        setCart(new Map());
-        setIsCheckoutOpen(false);
+            
+            if (payData.cust) {
+                await db.customers.put({
+                    id: crypto.randomUUID(),
+                    pharmacyId: currentPharmacy?.id || '',
+                    name: payData.cust,
+                    lastVisit: Date.now(),
+                    totalPurchases: netValue
+                });
+            }
+        });
+        
+        setCart([]);
         setPayData({ discount: '', cash: '', bank: '', debt: '', trx: '', cust: '' });
         triggerNotif("تمت عملية البيع بنجاح", "info");
         loadData();
-    }, [cart, payData, loadData, triggerNotif]);
+    } catch (error: any) {
+        console.error('❌ Sale error:', error);
+        triggerNotif(error.message || "فشلت عملية البيع", "error");
+    }
+}, [cart, payData, loadData, triggerNotif]);
 
     // Helper: Parse items_json for sales transparency
     const parseItemsJson = useCallback((itemsJson: string): string[] => {
@@ -716,16 +721,71 @@ const App: React.FC = () => {
         }
     }, []);
 
+    // Helper function for safe database operations
+    const safeDatabaseOperation = async (operation: () => Promise<any>, errorMessage: string) => {
+        try {
+            return await operation();
+        } catch (error) {
+            console.error(`❌ ${errorMessage}:`, error);
+            triggerNotif(errorMessage, "error");
+            return null;
+        }
+    };
+
+    // Retry mechanism for failed operations
+    const retryOperation = async (operation: () => Promise<any>, maxRetries = 3) => {
+        let lastError: any;
+        
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                return await operation();
+            } catch (error) {
+                lastError = error;
+                console.warn(`⚠️ Operation failed, retry ${i + 1}/${maxRetries}:`, error);
+                
+                if (i < maxRetries - 1) {
+                    // Wait before retry
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                    
+                    // Try to restore connection
+                    await db.retryFailedSync();
+                }
+            }
+        }
+        
+        throw lastError;
+    };
+
+    // Add connection status monitoring
+    useEffect(() => {
+        const checkConnection = async () => {
+            const status = await db.getConnectionStatus();
+            console.log('🔌 Connection status:', status);
+            if (!status.connected) {
+                console.warn('⚠️ Cloud connection issue detected');
+            }
+        };
+        
+        // Check connection every 30 seconds
+        const interval = setInterval(checkConnection, 30000);
+        checkConnection(); // Initial check
+        
+        return () => clearInterval(interval);
+    }, []);
+
     const handleWantedAdd = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            await db.smartAddWantedItem({
-                itemName: wantedData.name,
-                notes: wantedData.note,
-                requestCount: 1,
-                status: 'pending',
-                createdAt: Date.now()
-            }, currentPharmacy?.id!);
+            await safeDatabaseOperation(
+                () => db.smartAddWantedItem({
+                    pharmacyId: currentPharmacy?.id!,
+                    itemName: wantedData.name,
+                    notes: wantedData.note,
+                    requestCount: 1,
+                    status: 'pending'
+                }, currentPharmacy?.id!),
+                "فشل إضافة الناقص"
+            );
 
             triggerNotif("تمت المزامنة الذكية مع قائمة النواقص", "info");
             setIsWantedOpen(false);
@@ -736,95 +796,106 @@ const App: React.FC = () => {
         }
     }, [wantedData, currentPharmacy, loadData, triggerNotif]);
 
-    const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
-        e.preventDefault();
-        const { key, password } = activationData;
-        if (!key || !password) return;
+const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { key, password } = activationData;
+    if (!key || !password) return;
 
-        // منطق الدخول الخاص (الرمز المزدوج للاختبار)
-        if (key === 'raha0909' && password === 'raha0909') {
-            const trialPharmacy: Pharmacy = {
-                id: '00000000-0000-0000-0000-000000000001', // UUID صالح
-                pharmacyKey: 'TRIAL',
-                name: 'نسخة التجربة والاختبار',
-                masterPassword: 'raha0909',
-                status: 'active',
-                createdAt: Date.now()
-            };
-            setCurrentPharmacy(trialPharmacy);
-            setIsAuthenticated(true);
-            localStorage.setItem('raha_pro_activated', 'true');
-            triggerNotif("مرحباً بك في نسخة الاختبار الخاصة", "info");
-            await db.purgeAllLocalData(); // تصفير البيانات المحلية لضمان نسخة نظيفة
-            loadData();
+    // منطق الدخول الخاص (الرمز المزدوج للاختبار)
+    if (key === 'raha0909' && password === 'raha0909') {
+        const trialPharmacy: Pharmacy = {
+            id: '00000000-0000-0000-0000-000000000001', // UUID صالح
+            pharmacyKey: 'TRIAL',
+            name: 'نسخة التجربة والاختبار',
+            masterPassword: 'raha0909',
+            status: 'active',
+            createdAt: Date.now()
+        };
+        setCurrentPharmacy(trialPharmacy);
+        setIsAuthenticated(true);
+        localStorage.setItem('raha_pro_activated', 'true');
+        triggerNotif("مرحباً بك في نسخة الاختبار الخاصة", "info");
+        await db.purgeAllLocalData(); // تصفير البيانات المحلية لضمان نسخة نظيفة
+        loadData();
+        return;
+    }
+
+    setIsSyncing(true);
+    try {
+        const pharmacy = await safeDatabaseOperation(
+            () => db.verifyPharmacy(key),
+            "فشل التحقق من الصيدلية"
+        );
+        
+        if (!pharmacy) {
+            triggerNotif("رمز الصيدلية غير صحيح أو غير موجود", "error");
+            return;
+        }
+        
+        // التحقق من كلمة المرور الرئيسية عند التفعيل
+        console.log('🔍 Checking password:', password);
+        console.log('🔍 Stored password:', pharmacy.masterPassword);
+        
+        if (pharmacy.masterPassword !== password) {
+            triggerNotif("كلمة المرور الرئيسية غير صحيحة", "error");
+            console.log('❌ Password mismatch!');
             return;
         }
 
-        setIsSyncing(true);
-        try {
-            const pharmacy = await db.verifyPharmacy(key);
-            if (pharmacy) {
-                // التحقق من كلمة المرور الرئيسية عند التفعيل
-                console.log('🔍 Checking password:', password);
-                console.log('🔍 Stored password:', pharmacy.masterPassword);
-                
-                if (pharmacy.masterPassword !== password) {
-                    triggerNotif("كلمة المرور الرئيسية غير صحيحة", "error");
-                    console.log('❌ Password mismatch!');
-                    return;
-                }
-
-                // تجاهل أخطاء IndexedDB مؤقتاً
-                try {
-                    await db.purgeAllLocalData();
-                } catch (err) {
-                    console.warn('⚠️ IndexedDB purge failed, continuing...');
-                }
-
-                if (pharmacy.status === 'suspended') {
-                    setIsSuspended(true);
-                    triggerNotif("هذا الحساب معطل حالياً", "error");
-                    return;
-                }
-
-                setCurrentPharmacy(pharmacy);
-                setIsAuthenticated(true);
-                localStorage.setItem('raha_pro_activated', 'true');
-                triggerNotif(`مرحباً بك في ${pharmacy.name}`, "info");
-
-                // التحقق من المزامنة - إذا فشلت، لا ندخل المستخدم
-                try {
-                    console.log('🔄 Starting critical sync...');
-                    await db.purgeAllLocalData();
-                    const syncResult = await db.fullSyncFromCloud(pharmacy.id!);
-                    
-                    if (!syncResult) {
-                        throw new Error('Sync returned false');
-                    }
-                    
-                    await db.registerDevice(pharmacy.id!);
-                    console.log('✅ All sync operations successful');
-                    loadData();
-                    
-                } catch (err) {
-                    console.error('❌ Critical sync failed:', err);
-                    triggerNotif("فشل المزامنة - لا يمكن الدخول لحماية البيانات", "error");
-                    
-                    // إرجاع المستخدم لشاشة الدخول
-                    setCurrentPharmacy(null);
-                    setIsAuthenticated(false);
-                    localStorage.removeItem('raha_pro_activated');
-                    return;
-                }
-            } else {
-                triggerNotif("رمز الصيدلية غير صحيح أو غير موجود", "error");
-            }
-        } catch (err) {
-            triggerNotif("فشل الاتصال بالسيرفر", "error");
-        } finally {
-            setIsSyncing(false);
+        if (pharmacy.status === 'suspended') {
+            setIsSuspended(true);
+            triggerNotif("هذا الحساب معطل حالياً", "error");
+            return;
         }
-    }, [activationData, triggerNotif, loadData]);
+
+        // التحقق من المزامنة - إذا فشلت، لا ندخل المستخدم
+        try {
+            console.log('🔄 Starting critical sync...');
+            
+            // حذف البيانات المحلية أولاً
+            await safeDatabaseOperation(
+                () => db.purgeAllLocalData(),
+                "فشل حذف البيانات المحلية"
+            );
+            
+            // محاولة المزامنة من السحابة مع إعادة المحاولة
+            const syncResult = await retryOperation(
+                () => db.fullSyncFromCloud(pharmacy.id!),
+                3
+            );
+            
+            if (!syncResult.success) {
+                triggerNotif(`فشل المزامنة: ${syncResult.message}`, "error");
+                return; // عدم الدخول إذا فشلت المزامنة
+            }
+            
+            // تسجيل الجهاز
+            await safeDatabaseOperation(
+                () => db.registerDevice(pharmacy.id!),
+                "فشل تسجيل الجهاز"
+            );
+            
+            console.log('✅ All sync operations successful');
+            
+            // تحديث الحالة وتحميل البيانات
+            setCurrentPharmacy(pharmacy);
+            setIsAuthenticated(true);
+            localStorage.setItem('raha_pro_activated', 'true');
+            triggerNotif(`تم تسجيل الدخول بنجاح - ${pharmacy.name}`, "success");
+            loadData();
+            
+        } catch (syncError) {
+            console.error('❌ Critical sync failed:', syncError);
+            triggerNotif("فشل المزامنة الحرجة - يرجى المحاولة مرة أخرى", "error");
+            return;
+        }
+    } catch (err) {
+        console.error('❌ Pharmacy verification error:', err);
+        triggerNotif("خطأ في التحقق من الصيدلية", "error");
+    } finally {
+        setIsSyncing(false);
+    }
+}, [activationData, triggerNotif, loadData]);
 
     const handleLogout = useCallback(async () => {
         if (confirm("هل أنت متأكد من تسجيل الخروج؟ سيتم مسح البيانات المحلية.")) {

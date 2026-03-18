@@ -1,14 +1,10 @@
 const CACHE_NAME = 'raha-pro-v5-static';
 const OFFLINE_URL = '/index.html';
 
-// قائمة الملفات الأساسية للتشغيل (Hard Cache)
+// قائمة الملفات الأساسية للتشغيل (Hard Cache) - بدون ملفات TypeScript
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/index.tsx',
-  '/App.tsx',
-  '/db.ts',
-  '/types.ts',
   '/manifest.json',
   'https://cdn.tailwindcss.com',
   'https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;700;900&display=swap',
@@ -54,6 +50,22 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
+  
+  // تحديد الملفات التي يجب عدم تخزينها (ملفات التطوير)
+  const isDevelopmentFile = 
+    url.pathname.endsWith('.tsx') || 
+    url.pathname.endsWith('.ts') || 
+    url.pathname.endsWith('.js') || 
+    url.pathname.endsWith('.map') ||
+    url.pathname.includes('db.ts') ||
+    url.pathname.includes('App.tsx') ||
+    url.pathname.includes('types.ts');
+
+  // عدم تخزين ملفات التطوير
+  if (isDevelopmentFile) {
+    return fetch(event.request);
+  }
+
   const isCodeFile = 
     url.pathname.endsWith('.tsx') || 
     url.pathname.endsWith('.ts') || 
