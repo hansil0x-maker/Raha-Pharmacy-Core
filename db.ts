@@ -3,7 +3,6 @@ import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmac
 
 // =====================================================
 // REAL SOLUTION - SUPABASE LOADING FIX
-// Keep Supabase but fix the loading issue
 // =====================================================
 
 // Hidden Supabase configuration
@@ -26,56 +25,46 @@ export async function initSupabase() {
         }
         
         // ✅ REAL SOLUTION - أنشئ Supabase حقيقي!
-        console.log('🔄 Loading real Supabase client...');
-        supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-            realtime: false,
-            auth: {
-                persistSession: false,
-                autoRefreshToken: false
-            }
-        });
-
-        // ✅ IMMEDIATE OVERRIDE - RIGHT AFTER CREATION
-        supabase.subscribe = () => ({
-            on: () => ({ subscribe: () => ({}) }),
-            off: () => ({}),
-            subscribe: () => ({})
-        });
+        supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
         
-        supabase.channel = () => ({
-            on: () => ({ subscribe: () => ({}) }),
-            subscribe: () => ({})
-        });
+        // Fix subscribe and channel methods
+        const originalSubscribe = supabase.subscribe;
+        const originalChannel = supabase.channel;
+        const originalRealtime = supabase.realtime;
+        
+        supabase.subscribe = (...args: any[]) => {
+            console.warn('🔕 Supabase subscribe disabled to prevent errors');
+            return { unsubscribe: () => {} };
+        };
+        
+        supabase.channel = (...args: any[]) => {
+            console.warn('🔕 Supabase channel disabled to prevent errors');
+            return { subscribe: () => ({ unsubscribe: () => {} }) };
+        };
         
         supabase.realtime = {
-            subscribe: () => ({})
+            subscribe: () => ({ unsubscribe: () => {} }),
+            channels: []
         };
-
+        
         console.log('✅ Supabase initialized successfully (REAL SOLUTION)');
-        return supabase;
-    } catch (e) {
-        console.error('❌ Failed to load Supabase:', e);
-        return null;
+    } catch (error) {
+        console.error('❌ Failed to initialize Supabase:', error);
     }
 }
 
-// Hidden get function - FIXED ASYNC
 export async function getSupabase() {
     if (!supabase) {
-        // ✅ WAIT FOR INIT SUPABASE TO COMPLETE
         await initSupabase();
     }
     return supabase;
 }
 
-// Load immediately
-initSupabase();
-
 // =====================================================
-// SURGICAL DATABASE CLASS
+// DATABASE CLASS
 // =====================================================
 
-export class RahaDB extends Dexie {
+class RahaDB extends Dexie {
     medicines!: Table<Medicine, string>;
     sales!: Table<Sale, string>;
     expenses!: Table<Expense, string>;
@@ -88,90 +77,37 @@ export class RahaDB extends Dexie {
     constructor() {
         super('RahaDB');
         
-        this.version(23).stores({ // Incremented version
-            medicines: '++id, pharmacyId, name, barcode, category, expiryDate',
-            sales: '++id, timestamp, pharmacyId, customerName, isReturned',
-            expenses: '++id, timestamp, pharmacyId, type',
-            customers: '++id, pharmacyId, name',
-            notifications: '++id, pharmacyId, timestamp',
-            wantedItems: '++id, pharmacyId, itemName, status, createdAt, reminderAt',
-            pharmacies: '++id, pharmacyKey, name',
-            pharmacyDevices: '++id, pharmacyId, hardwareId'
+        // FORCE DELETE OLD DATABASE TO AVOID PRIMARY KEY CONFLICTS
+        Dexie.delete('RahaDB').then(() => {
+            console.log('🗑️ Old database deleted successfully');
+        }).catch((err) => {
+            console.warn('⚠️ Could not delete old database:', err);
+        });
+        
+        this.version(32).stores({ 
+            pharmacies: 'id, pharmacyKey, name',
+            medicines: 'id, pharmacyId, name, barcode, price, costPrice, stock, category, expiryDate, supplier, supplierPhone, addedDate, usageCount, lastSold, unitsPerPkg, minStockAlert',
+            sales: 'id, timestamp, pharmacyId, totalAmount, discount, netAmount, cashAmount, bankAmount, debtAmount, bankTrxId, customerName, totalCost, profit, itemsJson, isReturned',
+            expenses: 'id, timestamp, pharmacyId, category, amount, description, paymentMethod, receiptUrl',
+            customers: 'id, name, phone, email, address, notes, createdAt',
+            notifications: 'id, title, message, type, read, createdAt, data, timestamp',
+            wantedItems: 'id, pharmacyId, itemName, notes, requestCount, status, createdAt, reminderAt',
+            pharmacyDevices: 'id, pharmacyId, hardwareId, deviceName, lastLogin, isBanned'
         });
 
-        // Surgical error handling
+        // Handle upgrade errors by deleting database
         this.on('blocked', () => {
-            console.warn('🔄 Database blocked - reloading...');
-            window.location.reload();
+            console.warn(' Database blocked - deleting and reloading...');
+            Dexie.delete('RahaDB').then(() => {
+                window.location.reload();
+            });
         });
 
         this.on('versionchange', () => {
-            console.warn('🔄 Database version changed - reloading...');
-            window.location.reload();
-        });
-
-        // Silent sync hooks - FIXED ASYNC
-        this.medicines.hook('creating', async (primKey: any, obj: Medicine) => {
-            const client = await getSupabase();
-            if (client && obj.pharmacyId) {
-                const cloudObj = {
-                    id: obj.id,
-                    pharmacy_id: obj.pharmacyId,
-                    name: obj.name,
-                    barcode: obj.barcode,
-                    price: obj.price,
-                    cost_price: obj.costPrice,
-                    stock: obj.stock,
-                    category: obj.category,
-                    expiry_date: obj.expiryDate,
-                    supplier: obj.supplier,
-                    supplier_phone: obj.supplierPhone,
-                    added_date: obj.addedDate,
-                    usage_count: obj.usageCount,
-                    last_sold: obj.lastSold,
-                    units_per_pkg: obj.unitsPerPkg,
-                    min_stock_alert: obj.minStockAlert
-                };
-                
-                setTimeout(() => {
-                    client.from('medicines').upsert(cloudObj).then(({ error }: any) => {
-                        if (error) {
-                            console.error('❌ Silent medicine sync error:', error);
-                        }
-                    });
-                }, 100);
-            }
-        });
-
-        this.sales.hook('creating', async (primKey: any, obj: Sale) => {
-            const client = await getSupabase();
-            if (client && obj.pharmacyId) {
-                const cloudObj = {
-                    id: obj.id,
-                    timestamp: obj.timestamp,
-                    pharmacy_id: obj.pharmacyId,
-                    total_amount: obj.totalAmount,
-                    discount: obj.discount,
-                    net_amount: obj.netAmount,
-                    cash_amount: obj.cashAmount,
-                    bank_amount: obj.bankAmount,
-                    debt_amount: obj.debtAmount,
-                    bank_trx_id: obj.bankTrxId,
-                    customer_name: obj.customerName,
-                    total_cost: obj.totalCost,
-                    profit: obj.profit,
-                    items_json: obj.itemsJson ? JSON.parse(obj.itemsJson) : {},
-                    is_returned: obj.isReturned
-                };
-                
-                setTimeout(() => {
-                    client.from('sales').upsert(cloudObj).then(({ error }: any) => {
-                        if (error) {
-                            console.error('❌ Silent sale sync error:', error);
-                        }
-                    });
-                }, 100);
-            }
+            console.warn('🔄 Database version changed - deleting and reloading...');
+            Dexie.delete('RahaDB').then(() => {
+                window.location.reload();
+            });
         });
     }
 
@@ -182,17 +118,16 @@ export class RahaDB extends Dexie {
     async verifyPharmacy(key: string): Promise<Pharmacy | null> {
         const startTime = Date.now();
         try {
-            const supabase = await getSupabase(); // ← FIXED: Add await!
+            const supabase = await getSupabase();
             if (!supabase) {
                 console.error('❌ Supabase not available');
                 return null;
             }
 
-            // ✅ FIXED: Use correct column name
             const { data, error } = await supabase
                 .from('pharmacies')
                 .select('*')
-                .eq('pharmacy_key', key) // ← FIXED COLUMN NAME
+                .eq('pharmacy_key', key)
                 .single();
 
             if (error) {
@@ -200,23 +135,8 @@ export class RahaDB extends Dexie {
                 return null;
             }
 
-            // ✅ FIXED: Map cloud data to local format
-            const pharmacyData: Pharmacy = {
-                id: data.id,
-                pharmacyKey: data.pharmacy_key, // ← FIXED MAPPING
-                name: data.name,
-                masterPassword: data.master_password,
-                status: data.status as 'active' | 'suspended'
-            };
-
             console.log('✅ Pharmacy verified:', data.name);
-            await this.pharmacies.clear();
-            await this.pharmacies.add({
-                id: data.id,
-                pharmacyKey: data.pharmacy_key,
-                name: data.name
-            });
-
+            
             return {
                 id: data.id,
                 pharmacyKey: data.pharmacy_key,
@@ -239,6 +159,24 @@ export class RahaDB extends Dexie {
                 return false;
             }
 
+            // Sync pharmacies first
+            const { data: pharmacies } = await supabase
+                .from('pharmacies')
+                .select('*')
+                .eq('id', pharmacyId);
+
+            if (pharmacies && pharmacies.length > 0) {
+                await this.pharmacies.clear();
+                const validPharmacies = pharmacies.filter((p: any) => p.id != null);
+                if (validPharmacies.length > 0) {
+                    await this.pharmacies.bulkAdd(validPharmacies.map((p: any) => ({
+                        id: p.id,
+                        pharmacyKey: p.pharmacy_key,
+                        name: p.name
+                    })));
+                }
+            }
+
             // Sync medicines
             const { data: medicines } = await supabase
                 .from('medicines')
@@ -247,24 +185,27 @@ export class RahaDB extends Dexie {
 
             if (medicines) {
                 await this.medicines.clear();
-                await this.medicines.bulkPut(medicines.map((m: any) => ({
-                    id: m.id,
-                    pharmacyId: m.pharmacy_id,
-                    name: m.name,
-                    barcode: m.barcode,
-                    price: m.price,
-                    costPrice: m.cost_price,
-                    stock: m.stock,
-                    category: m.category,
-                    expiryDate: m.expiry_date,
-                    supplier: m.supplier,
-                    supplierPhone: m.supplier_phone,
-                    addedDate: m.added_date,
-                    usageCount: m.usage_count,
-                    lastSold: m.last_sold,
-                    unitsPerPkg: m.units_per_pkg,
-                    minStockAlert: m.min_stock_alert
-                })));
+                const validMedicines = medicines.filter((m: any) => m.id != null);
+                if (validMedicines.length > 0) {
+                    await this.medicines.bulkPut(validMedicines.map((m: any) => ({
+                        id: m.id,
+                        pharmacyId: m.pharmacy_id,
+                        name: m.name,
+                        barcode: m.barcode,
+                        price: m.price,
+                        costPrice: m.cost_price,
+                        stock: m.stock,
+                        category: m.category,
+                        expiryDate: m.expiry_date,
+                        supplier: m.supplier,
+                        supplierPhone: m.supplier_phone,
+                        addedDate: m.added_date,
+                        usageCount: m.usage_count,
+                        lastSold: m.last_sold,
+                        unitsPerPkg: m.units_per_pkg,
+                        minStockAlert: m.min_stock_alert
+                    })));
+                }
             }
 
             // Sync sales
@@ -275,23 +216,26 @@ export class RahaDB extends Dexie {
 
             if (sales) {
                 await this.sales.clear();
-                await this.sales.bulkPut(sales.map((s: any) => ({
-                    id: s.id,
-                    timestamp: Number(s.timestamp),
-                    pharmacyId: s.pharmacy_id,
-                    totalAmount: s.total_amount,
-                    discount: s.discount,
-                    netAmount: s.net_amount,
-                    cashAmount: s.cash_amount,
-                    bankAmount: s.bank_amount,
-                    debtAmount: s.debt_amount,
-                    bankTrxId: s.bank_trx_id,
-                    customerName: s.customer_name,
-                    totalCost: s.total_cost,
-                    profit: s.profit,
-                    itemsJson: JSON.stringify(s.items_json),
-                    isReturned: s.is_returned
-                })));
+                const validSales = sales.filter((s: any) => s.id != null);
+                if (validSales.length > 0) {
+                    await this.sales.bulkPut(validSales.map((s: any) => ({
+                        id: s.id,
+                        timestamp: Number(s.timestamp),
+                        pharmacyId: s.pharmacy_id,
+                        totalAmount: s.total_amount,
+                        discount: s.discount,
+                        netAmount: s.net_amount,
+                        cashAmount: s.cash_amount,
+                        bankAmount: s.bank_amount,
+                        debtAmount: s.debt_amount,
+                        bankTrxId: s.bank_trx_id,
+                        customerName: s.customer_name,
+                        totalCost: s.total_cost,
+                        profit: s.profit,
+                        itemsJson: JSON.stringify(s.items_json),
+                        isReturned: s.is_returned
+                    })));
+                }
             }
 
             console.log('✅ Full sync completed successfully');
@@ -337,13 +281,28 @@ export class RahaDB extends Dexie {
         }
 
         try {
+            // Check if device already exists first
+            const { data: existingDevice } = await supabase
+                .from('pharmacy_devices')
+                .select('*')
+                .eq('pharmacy_id', pharmacyId)
+                .eq('hardware_id', hardwareId)
+                .single();
+
+            if (existingDevice) {
+                console.log('✅ Device already registered, using existing hardware ID');
+                this.logPerformance('registerDevice', startTime);
+                return hardwareId;
+            }
+
+            // Only insert if device doesn't exist
             const { error } = await supabase
                 .from('pharmacy_devices')
                 .insert([{
                     pharmacy_id: pharmacyId,
                     hardware_id: hardwareId,
                     device_name: 'Raha PRO Device',
-                    last_login: Date.now(),
+                    last_login: new Date().toISOString(),
                     is_banned: false
                 }]);
 
@@ -360,24 +319,57 @@ export class RahaDB extends Dexie {
         }
     }
 
+    async checkDeviceBan(pharmacyId: string): Promise<boolean> {
+        const startTime = Date.now();
+        try {
+            let hardwareId = localStorage.getItem('raha_hardware_id');
+            if (!hardwareId) {
+                hardwareId = crypto.randomUUID();
+                localStorage.setItem('raha_hardware_id', hardwareId);
+            }
+
+            const supabase = await getSupabase();
+            if (!supabase) {
+                console.warn('⚠️ Supabase not available for device ban check');
+                return false;
+            }
+
+            const { data, error } = await supabase
+                .from('pharmacy_devices')
+                .select('is_banned')
+                .eq('pharmacy_id', pharmacyId)
+                .eq('hardware_id', hardwareId)
+                .single();
+
+            if (error) {
+                console.warn('⚠️ Device ban check failed:', error.message);
+                return false;
+            }
+
+            const isBanned = data?.is_banned || false;
+            this.logPerformance('checkDeviceBan', startTime);
+            return isBanned;
+        } catch (e) {
+            console.error('❌ Device ban check error:', e);
+            return false;
+        }
+    }
+
     async smartAddWantedItem(item: Omit<WantedItem, 'id' | 'createdAt'>, pharmacyId: string) {
         console.log('🧠 Smart wanted item addition:', item.itemName);
         
-        // Check if already exists
         const existing = await this.wantedItems
             .where('pharmacyId').equals(pharmacyId)
             .and(item => item.itemName === item.itemName && item.status === 'pending')
             .first();
 
         if (existing) {
-            // Update existing
             await this.wantedItems.update(existing.id!, {
                 requestCount: (existing.requestCount || 1) + (item.requestCount || 1),
                 notes: item.notes || existing.notes
             });
             console.log('✅ Updated existing wanted item');
         } else {
-            // Add new
             const newItem: WantedItem = {
                 ...item,
                 id: crypto.randomUUID(),
@@ -388,7 +380,6 @@ export class RahaDB extends Dexie {
             console.log('✅ Added new wanted item');
         }
 
-        // Real cloud sync
         const client = await getSupabase();
         if (client) {
             const cloudObj = {

@@ -858,14 +858,11 @@ const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
                 "فشل حذف البيانات المحلية"
             );
             
-            // محاولة المزامنة من السحابة مع إعادة المحاولة
-            const syncResult = await retryOperation(
-                () => db.fullSyncFromCloud(pharmacy.id!),
-                3
-            );
+            // محاولة المزامنة من السحابة مباشرة
+            const syncResult = await db.fullSyncFromCloud(pharmacy.id!);
             
-            if (!syncResult.success) {
-                triggerNotif(`فشل المزامنة: ${syncResult.message}`, "error");
+            if (!syncResult) {
+                triggerNotif("فشل المزامنة من السحابة", "error");
                 return; // عدم الدخول إذا فشلت المزامنة
             }
             
