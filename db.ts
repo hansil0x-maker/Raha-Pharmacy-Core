@@ -182,7 +182,7 @@ export class RahaDB extends Dexie {
     async verifyPharmacy(key: string): Promise<Pharmacy | null> {
         const startTime = Date.now();
         try {
-            const supabase = getSupabase();
+            const supabase = await getSupabase(); // ← FIXED: Add await!
             if (!supabase) {
                 console.error('❌ Supabase not available');
                 return null;
