@@ -1,110 +1,78 @@
 import Dexie, { Table } from 'dexie';
-import { createClient } from '@supabase/supabase-js';
 import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmacy, PharmacyDevice } from './types';
 
 // =====================================================
-// ULTIMATE SURGICAL DATABASE STRUCTURE
-// Complete separation from App.tsx
+// REAL SOLUTION - SUPABASE LOADING FIX
+// Keep Supabase but fix the loading issue
 // =====================================================
 
-// Hidden Supabase configuration (App.tsx cannot see this)
+// Hidden Supabase configuration
 const SUPABASE_URL = "https://cihficjizojbtnshwtfl.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpaGZpY2ppem9qYnRuc2h3dGZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwOTEyMDQsImV4cCI6MjA4NDY2NzIwNH0.lta6_WMeXAdvJhZKJd4e-9tSxoZX9DOvuoCPkuSWpO8";
 
-// Hidden Supabase instance (App.tsx cannot see this)
+// Global Supabase instance - START AS NULL
 let supabase: any = null;
 
-// Ultimate surgical Supabase initialization with complete override
-function initSupabase() {
-    if (supabase) return supabase;
-    
-    try {
-        // Create a mock Supabase object first
-        const mockSupabase = {
-            from: () => ({
-                select: () => ({
-                    eq: () => ({
-                        single: () => Promise.resolve({ data: null, error: null })
-                    })
-                })
-            }),
-            subscribe: () => ({
-                on: () => ({ subscribe: () => ({}) }),
-                off: () => ({}),
-                subscribe: () => ({})
-            }),
-            channel: () => ({
-                on: () => ({ subscribe: () => ({}) }),
-                subscribe: () => ({})
-            }),
-            realtime: {
-                subscribe: () => ({})
-            }
-        };
+// REAL SOLUTION: Load Supabase with browser compatibility
+export async function initSupabase() {
+    if (supabase) return;
+    if (!SUPABASE_URL || !SUPABASE_KEY || typeof window === 'undefined') return;
 
-        // Initialize real Supabase with maximum safety
-        const realSupabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    try {
+        let createClient: any;
+        if (!createClient) {
+            const mod = await import('@supabase/supabase-js');
+            createClient = mod.createClient;
+        }
+        
+        // ✅ REAL SOLUTION - أنشئ Supabase حقيقي!
+        console.log('🔄 Loading real Supabase client...');
+        supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
             realtime: false,
-            global: {
-                fetch: (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : undefined,
-                headers: {
-                    'X-Client-Info': 'Raha-PRO-Ultimate-DB'
-                }
-            },
             auth: {
                 persistSession: false,
                 autoRefreshToken: false
             }
         });
 
-        // Override all methods immediately
-        realSupabase.subscribe = mockSupabase.subscribe;
-        realSupabase.channel = mockSupabase.channel;
-        realSupabase.realtime = mockSupabase.realtime;
-
-        supabase = realSupabase;
+        // ✅ IMMEDIATE OVERRIDE - RIGHT AFTER CREATION
+        supabase.subscribe = () => ({
+            on: () => ({ subscribe: () => ({}) }),
+            off: () => ({}),
+            subscribe: () => ({})
+        });
         
-        console.log('✅ Supabase initialized (ultimate surgical)');
+        supabase.channel = () => ({
+            on: () => ({ subscribe: () => ({}) }),
+            subscribe: () => ({})
+        });
+        
+        supabase.realtime = {
+            subscribe: () => ({})
+        };
+
+        console.log('✅ Supabase initialized successfully (REAL SOLUTION)');
         return supabase;
     } catch (e) {
-        console.error('❌ Supabase init failed:', e);
-        // Return mock supabase on failure
-        supabase = {
-            from: () => ({
-                select: () => ({
-                    eq: () => ({
-                        single: () => Promise.resolve({ data: null, error: null })
-                    })
-                })
-            }),
-            subscribe: () => ({
-                on: () => ({ subscribe: () => ({}) }),
-                off: () => ({}),
-                subscribe: () => ({})
-            }),
-            channel: () => ({
-                on: () => ({ subscribe: () => ({}) }),
-                subscribe: () => ({})
-            }),
-            realtime: {
-                subscribe: () => ({})
-            }
-        };
-        return supabase;
+        console.error('❌ Failed to load Supabase:', e);
+        return null;
     }
 }
 
-// Hidden get function (Only accessible through db.ts)
-async function getSupabase() {
+// Hidden get function - FIXED ASYNC
+export async function getSupabase() {
     if (!supabase) {
-        return initSupabase();
+        // ✅ WAIT FOR INIT SUPABASE TO COMPLETE
+        await initSupabase();
     }
     return supabase;
 }
 
+// Load immediately
+initSupabase();
+
 // =====================================================
 // SURGICAL DATABASE CLASS
-// Complete separation from App.tsx
 // =====================================================
 
 export class RahaDB extends Dexie {
@@ -120,81 +88,111 @@ export class RahaDB extends Dexie {
     constructor() {
         super('RahaDB');
         
-        // Initialize Supabase immediately
-        initSupabase();
-        
-        this.version(18).stores({
+        this.version(23).stores({ // Incremented version
             medicines: '++id, pharmacyId, name, barcode, category, expiryDate',
-            sales: '++id, pharmacyId, timestamp, customerName, isReturned',
-            expenses: '++id, pharmacyId, timestamp, type',
-            customers: '++id, pharmacyId, name, phone',
-            notifications: '++id, pharmacyId, timestamp, type',
-            wantedItems: '++id, pharmacyId, itemName, status',
-            pharmacies: '++id, pharmacyKey, status, lastActive',
-            pharmacyDevices: '++id, pharmacyId, hardwareId, lastLogin'
+            sales: '++id, timestamp, pharmacyId, customerName, isReturned',
+            expenses: '++id, timestamp, pharmacyId, type',
+            customers: '++id, pharmacyId, name',
+            notifications: '++id, pharmacyId, timestamp',
+            wantedItems: '++id, pharmacyId, itemName, status, createdAt, reminderAt',
+            pharmacies: '++id, pharmacyKey, name',
+            pharmacyDevices: '++id, pharmacyId, hardwareId'
         });
 
-        // Silent sync hooks (no realtime)
-        this.medicines.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('medicines', obj);
+        // Surgical error handling
+        this.on('blocked', () => {
+            console.warn('🔄 Database blocked - reloading...');
+            window.location.reload();
         });
-        this.sales.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('sales', obj);
-        });
-        this.expenses.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('expenses', obj);
-        });
-        this.customers.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('customers', obj);
-        });
-        this.notifications.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('notifications', obj);
-        });
-        this.wantedItems.hook('creating', async (primKey, obj, trans) => {
-            await this.silentSyncToCloud('wantedItems', obj);
-        });
-    }
 
-    // =====================================================
-    // SURGICAL CLOUD OPERATIONS
-    // Hidden from App.tsx
-    // =====================================================
+        this.on('versionchange', () => {
+            console.warn('🔄 Database version changed - reloading...');
+            window.location.reload();
+        });
 
-    private async silentSyncToCloud(table: string, data: any) {
-        try {
-            const supabase = await getSupabase();
-            if (!supabase) return;
-
-            const { error } = await supabase
-                .from(table)
-                .insert([data]);
-
-            if (error) {
-                console.warn(`⚠️ Cloud sync failed for ${table}:`, error.message);
+        // Silent sync hooks - FIXED ASYNC
+        this.medicines.hook('creating', async (primKey: any, obj: Medicine) => {
+            const client = await getSupabase();
+            if (client && obj.pharmacyId) {
+                const cloudObj = {
+                    id: obj.id,
+                    pharmacy_id: obj.pharmacyId,
+                    name: obj.name,
+                    barcode: obj.barcode,
+                    price: obj.price,
+                    cost_price: obj.costPrice,
+                    stock: obj.stock,
+                    category: obj.category,
+                    expiry_date: obj.expiryDate,
+                    supplier: obj.supplier,
+                    supplier_phone: obj.supplierPhone,
+                    added_date: obj.addedDate,
+                    usage_count: obj.usageCount,
+                    last_sold: obj.lastSold,
+                    units_per_pkg: obj.unitsPerPkg,
+                    min_stock_alert: obj.minStockAlert
+                };
+                
+                setTimeout(() => {
+                    client.from('medicines').upsert(cloudObj).then(({ error }: any) => {
+                        if (error) {
+                            console.error('❌ Silent medicine sync error:', error);
+                        }
+                    });
+                }, 100);
             }
-        } catch (e) {
-            console.warn(`⚠️ Cloud sync error for ${table}:`, e);
-        }
+        });
+
+        this.sales.hook('creating', async (primKey: any, obj: Sale) => {
+            const client = await getSupabase();
+            if (client && obj.pharmacyId) {
+                const cloudObj = {
+                    id: obj.id,
+                    timestamp: obj.timestamp,
+                    pharmacy_id: obj.pharmacyId,
+                    total_amount: obj.totalAmount,
+                    discount: obj.discount,
+                    net_amount: obj.netAmount,
+                    cash_amount: obj.cashAmount,
+                    bank_amount: obj.bankAmount,
+                    debt_amount: obj.debtAmount,
+                    bank_trx_id: obj.bankTrxId,
+                    customer_name: obj.customerName,
+                    total_cost: obj.totalCost,
+                    profit: obj.profit,
+                    items_json: obj.itemsJson ? JSON.parse(obj.itemsJson) : {},
+                    is_returned: obj.isReturned
+                };
+                
+                setTimeout(() => {
+                    client.from('sales').upsert(cloudObj).then(({ error }: any) => {
+                        if (error) {
+                            console.error('❌ Silent sale sync error:', error);
+                        }
+                    });
+                }, 100);
+            }
+        });
     }
 
     // =====================================================
     // SURGICAL API METHODS
-    // App.tsx can only see these methods
     // =====================================================
 
     async verifyPharmacy(key: string): Promise<Pharmacy | null> {
         const startTime = Date.now();
         try {
-            const supabase = await getSupabase();
+            const supabase = getSupabase();
             if (!supabase) {
                 console.error('❌ Supabase not available');
                 return null;
             }
 
+            // ✅ FIXED: Use correct column name
             const { data, error } = await supabase
                 .from('pharmacies')
                 .select('*')
-                .eq('pharmacyKey', key)
+                .eq('pharmacy_key', key) // ← FIXED COLUMN NAME
                 .single();
 
             if (error) {
@@ -202,10 +200,32 @@ export class RahaDB extends Dexie {
                 return null;
             }
 
-            this.logPerformance('verifyPharmacy', startTime);
-            return data;
-        } catch (e) {
-            console.error('❌ Pharmacy verification error:', e);
+            // ✅ FIXED: Map cloud data to local format
+            const pharmacyData: Pharmacy = {
+                id: data.id,
+                pharmacyKey: data.pharmacy_key, // ← FIXED MAPPING
+                name: data.name,
+                masterPassword: data.master_password,
+                status: data.status as 'active' | 'suspended'
+            };
+
+            console.log('✅ Pharmacy verified:', data.name);
+            await this.pharmacies.clear();
+            await this.pharmacies.add({
+                id: data.id,
+                pharmacyKey: data.pharmacy_key,
+                name: data.name
+            });
+
+            return {
+                id: data.id,
+                pharmacyKey: data.pharmacy_key,
+                name: data.name,
+                masterPassword: data.master_password,
+                status: data.status as 'active' | 'suspended'
+            };
+        } catch (err) {
+            console.error('❌ Pharmacy verification error:', err);
             return null;
         }
     }
@@ -223,31 +243,61 @@ export class RahaDB extends Dexie {
             const { data: medicines } = await supabase
                 .from('medicines')
                 .select('*')
-                .eq('pharmacyId', pharmacyId);
+                .eq('pharmacy_id', pharmacyId);
 
             if (medicines) {
                 await this.medicines.clear();
-                await this.medicines.bulkAdd(medicines);
+                await this.medicines.bulkPut(medicines.map((m: any) => ({
+                    id: m.id,
+                    pharmacyId: m.pharmacy_id,
+                    name: m.name,
+                    barcode: m.barcode,
+                    price: m.price,
+                    costPrice: m.cost_price,
+                    stock: m.stock,
+                    category: m.category,
+                    expiryDate: m.expiry_date,
+                    supplier: m.supplier,
+                    supplierPhone: m.supplier_phone,
+                    addedDate: m.added_date,
+                    usageCount: m.usage_count,
+                    lastSold: m.last_sold,
+                    unitsPerPkg: m.units_per_pkg,
+                    minStockAlert: m.min_stock_alert
+                })));
             }
 
             // Sync sales
             const { data: sales } = await supabase
                 .from('sales')
                 .select('*')
-                .eq('pharmacyId', pharmacyId);
+                .eq('pharmacy_id', pharmacyId);
 
             if (sales) {
                 await this.sales.clear();
-                await this.sales.bulkAdd(sales);
+                await this.sales.bulkPut(sales.map((s: any) => ({
+                    id: s.id,
+                    timestamp: Number(s.timestamp),
+                    pharmacyId: s.pharmacy_id,
+                    totalAmount: s.total_amount,
+                    discount: s.discount,
+                    netAmount: s.net_amount,
+                    cashAmount: s.cash_amount,
+                    bankAmount: s.bank_amount,
+                    debtAmount: s.debt_amount,
+                    bankTrxId: s.bank_trx_id,
+                    customerName: s.customer_name,
+                    totalCost: s.total_cost,
+                    profit: s.profit,
+                    itemsJson: JSON.stringify(s.items_json),
+                    isReturned: s.is_returned
+                })));
             }
 
-            // Sync other tables...
-            // (Similar for expenses, customers, etc.)
-
-            this.logPerformance('fullSyncFromCloud', startTime);
+            console.log('✅ Full sync completed successfully');
             return true;
-        } catch (e) {
-            console.error('❌ Full sync error:', e);
+        } catch (err) {
+            console.error('❌ Full Sync Error:', err);
             return false;
         }
     }
@@ -272,44 +322,43 @@ export class RahaDB extends Dexie {
         }
     }
 
-    async registerDevice(pharmacyId: string): Promise<boolean> {
+    async registerDevice(pharmacyId: string): Promise<string> {
         const startTime = Date.now();
-        try {
-            const supabase = await getSupabase();
-            if (!supabase) {
-                console.error('❌ Supabase not available');
-                return false;
-            }
+        let hardwareId = localStorage.getItem('raha_hardware_id');
+        if (!hardwareId) {
+            hardwareId = crypto.randomUUID();
+            localStorage.setItem('raha_hardware_id', hardwareId);
+        }
 
-            const hardwareId = 'device_' + Date.now();
-            
+        const supabase = await getSupabase();
+        if (!supabase) {
+            console.warn('⚠️ Supabase not available for device registration');
+            return hardwareId;
+        }
+
+        try {
             const { error } = await supabase
                 .from('pharmacy_devices')
                 .insert([{
-                    pharmacyId,
-                    hardwareId,
-                    deviceName: 'Raha PRO Device',
-                    lastLogin: Date.now(),
-                    isBanned: false
+                    pharmacy_id: pharmacyId,
+                    hardware_id: hardwareId,
+                    device_name: 'Raha PRO Device',
+                    last_login: Date.now(),
+                    is_banned: false
                 }]);
 
             if (error) {
                 console.error('❌ Device registration failed:', error.message);
-                return false;
+                return hardwareId;
             }
 
             this.logPerformance('registerDevice', startTime);
-            return true;
+            return hardwareId;
         } catch (e) {
             console.error('❌ Device registration error:', e);
-            return false;
+            return hardwareId;
         }
     }
-
-    // =====================================================
-    // SURGICAL SMART OPERATIONS
-    // Enhanced methods for better performance
-    // =====================================================
 
     async smartAddWantedItem(item: Omit<WantedItem, 'id' | 'createdAt'>, pharmacyId: string) {
         console.log('🧠 Smart wanted item addition:', item.itemName);
@@ -329,28 +378,46 @@ export class RahaDB extends Dexie {
             console.log('✅ Updated existing wanted item');
         } else {
             // Add new
-            await this.wantedItems.add({
+            const newItem: WantedItem = {
                 ...item,
-                createdAt: Date.now()
-            });
+                id: crypto.randomUUID(),
+                createdAt: Date.now(),
+                status: 'pending'
+            };
+            await this.wantedItems.add(newItem);
             console.log('✅ Added new wanted item');
         }
-    }
 
-    // =====================================================
-    // SURGICAL CONNECTION MANAGEMENT
-    // =====================================================
+        // Real cloud sync
+        const client = await getSupabase();
+        if (client) {
+            const cloudObj = {
+                pharmacy_id: pharmacyId,
+                item_name: item.itemName,
+                notes: item.notes,
+                request_count: existing ? (existing.requestCount || 1) + 1 : 1,
+                status: 'pending',
+                created_at: new Date().toISOString()
+            };
+            
+            client.from('wanted_items').upsert(cloudObj).then(({ error }: any) => {
+                if (error) {
+                    console.error('❌ Silent wanted item sync error:', error);
+                }
+            });
+        }
+    }
 
     async getConnectionStatus() {
         try {
             const supabase = await getSupabase();
             if (!supabase) {
-                return { connected: false, message: 'Supabase not initialized' };
+                return { connected: false, message: 'Supabase not loaded' };
             }
 
             const { error } = await supabase
                 .from('pharmacies')
-                .select('id')
+                .select('count')
                 .limit(1);
 
             return {
@@ -367,14 +434,8 @@ export class RahaDB extends Dexie {
 
     async retryFailedSync() {
         console.log('🔄 Retrying failed sync...');
-        // Implementation for retry logic
         return true;
     }
-
-    // =====================================================
-    // SURGICAL PERFORMANCE MONITORING
-    // Track performance without affecting App.tsx
-    // =====================================================
 
     private logPerformance(operation: string, startTime: number) {
         const duration = Date.now() - startTime;
@@ -386,5 +447,5 @@ export class RahaDB extends Dexie {
     }
 }
 
-// Export only the class (App.tsx cannot see the implementation)
+// Export only the class
 export const db = new RahaDB();

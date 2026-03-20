@@ -166,13 +166,13 @@ const App: React.FC = () => {
                 // فقط تحميل البيانات المحلية، لا مزامنة تلقائية
                 loadData();
 
-                // Periodic status check
+                // Periodic status check - Real Supabase
                 const statusCheck = await db.verifyPharmacy(saved.pharmacyKey);
                 if (statusCheck && statusCheck.status === 'suspended') {
                     setIsSuspended(true);
                 }
 
-                // Device Ban Check (Kill Switch)
+                // Device Ban Check - Real Supabase
                 const hardwareId = localStorage.getItem('raha_hardware_id');
                 if (hardwareId && saved.id) {
                     const isBanned = await db.checkDeviceBan(saved.id, hardwareId);
