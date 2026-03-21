@@ -855,7 +855,101 @@ const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
         }
         loadData();
     } else {
-        // ... (rest of the code remains the same)
+        // منطق الدخول للصيدليات المسجلة في السحابة
+        setIsSyncing(true);
+        try {
+            const pharmacy = await safeDatabaseOperation(
+                () => db.verifyPharmacy(key),
+                "فشل التحقق من الصيدلية"
+            );
+            
+            if (!pharmacy) {
+                triggerNotif("رمز الصيدلية غير صحيح أو غير موجود", "error");
+                return;
+            }
+            
+            // التحقق من كلمة المرور الرئيسية
+            console.log('🔍 Checking password:', password);
+            console.log('🔍 Stored password:', pharmacy.masterPassword);
+            
+            if (pharmacy.masterPassword !== password) {
+                triggerNotif("كلمة المرور الرئيسية غير صحيحة", "error");
+                console.log('❌ Password mismatch!');
+                return;
+            }
+
+            if (pharmacy.status === 'suspended') {
+                setIsSuspended(true);
+                triggerNotif("هذا الحساب معطل حالياً", "error");
+                return;
+            }
+            
+            // التحقق من المزامنة - إذا فشلت، لا ندخل المستخدم
+            try {
+                console.log('🔄 Starting critical sync...');
+                
+                // حذف البيانات المحلية أولاً
+                await safeDatabaseOperation(
+                    () => db.purgeAllLocalData(),
+                    "فشل حذف البيانات المحلية"
+                );
+                
+                // محاولة المزامنة من السحابة مباشرة
+                const syncResult = await db.fullSyncFromCloud(pharmacy.id!);
+                
+                if (!syncResult) {
+                    triggerNotif("فشل المزامنة من السحابة", "error");
+                    return; // عدم الدخول إذا فشلت المزامنة
+                }
+                
+                // تسجيل الجهاز
+                await safeDatabaseOperation(
+                    () => db.registerDevice(pharmacy.id!),
+                    "فشل تسجيل الجهاز"
+                );
+                
+                console.log('✅ All sync operations successful');
+                
+                // حفظ بيانات الصيدلية محلياً للدخول التلقائي
+                const existingPharmacy = await db.pharmacies.where('id').equals(pharmacy.id).first();
+                if (!existingPharmacy) {
+                    await db.pharmacies.add({
+                        id: pharmacy.id,
+                        pharmacyKey: pharmacy.pharmacyKey,
+                        name: pharmacy.name,
+                        masterPassword: pharmacy.masterPassword,
+                        status: pharmacy.status,
+                        lastActive: Date.now()
+                    });
+                } else {
+                    // تحديث الصيدلية الموجودة
+                    await db.pharmacies.update(pharmacy.id, {
+                        pharmacyKey: pharmacy.pharmacyKey,
+                        name: pharmacy.name,
+                        masterPassword: pharmacy.masterPassword,
+                        status: pharmacy.status,
+                        lastActive: Date.now()
+                    });
+                }
+                
+                // تحديث الحالة وتحميل البيانات
+                setCurrentPharmacy(pharmacy);
+                setIsAuthenticated(true);
+                localStorage.setItem('raha_pro_activated', 'true');
+                triggerNotif(`تم تسجيل الدخول بنجاح - ${pharmacy.name}`, "success");
+                loadData();
+                
+            } catch (syncError) {
+                console.error('❌ Critical sync failed:', syncError);
+                triggerNotif("فشل المزامنة الحرجة - يرجى المحاولة مرة أخرى", "error");
+                return;
+            }
+        } catch (err) {
+            console.error('❌ Pharmacy verification error:', err);
+            triggerNotif("خطأ في التحقق من الصيدلية", "error");
+        } finally {
+            setIsSyncing(false);
+        }
     }
 }, [activationData, triggerNotif, loadData]);
 
