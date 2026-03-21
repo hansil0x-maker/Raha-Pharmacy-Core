@@ -257,7 +257,7 @@ const App: React.FC = () => {
                     setIsSyncing(true);
                     try {
                         const res = await db.fullSyncFromCloud(currentPharmacy.id);
-                        if (res.success) triggerNotif(`تمت مزامنة البيانات من السحاب بنجاح`, "info");
+                        if (res) triggerNotif(`تمت مزامنة البيانات من السحاب بنجاح`, "info");
                         else triggerNotif(`فشلت المزامنة`, "error");
                     } catch (err) {
                         console.error('Sync error:', err);
@@ -816,6 +816,17 @@ const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
         localStorage.setItem('raha_pro_activated', 'true');
         triggerNotif("مرحباً بك في نسخة الاختبار الخاصة", "info");
         await db.purgeAllLocalData(); // تصفير البيانات المحلية لضمان نسخة نظيفة
+        
+        // حفظ بيانات الصيدلية التجريبية محلياً
+        await db.pharmacies.add({
+            id: trialPharmacy.id,
+            pharmacyKey: trialPharmacy.pharmacyKey,
+            name: trialPharmacy.name,
+            masterPassword: trialPharmacy.masterPassword,
+            status: trialPharmacy.status,
+            lastActive: Date.now()
+        });
+        
         loadData();
         return;
     }
@@ -873,6 +884,16 @@ const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
             );
             
             console.log('✅ All sync operations successful');
+            
+            // حفظ بيانات الصيدلية محلياً للدخول التلقائي
+            await db.pharmacies.add({
+                id: pharmacy.id,
+                pharmacyKey: pharmacy.pharmacyKey,
+                name: pharmacy.name,
+                masterPassword: pharmacy.masterPassword,
+                status: pharmacy.status,
+                lastActive: Date.now()
+            });
             
             // تحديث الحالة وتحميل البيانات
             setCurrentPharmacy(pharmacy);
