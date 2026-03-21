@@ -88,7 +88,7 @@ class RahaDB extends Dexie {
             pharmacies: 'id, pharmacyKey, name',
             medicines: 'id, pharmacyId, name, barcode, price, costPrice, stock, category, expiryDate, supplier, supplierPhone, addedDate, usageCount, lastSold, unitsPerPkg, minStockAlert',
             sales: 'id, timestamp, pharmacyId, totalAmount, discount, netAmount, cashAmount, bankAmount, debtAmount, bankTrxId, customerName, totalCost, profit, itemsJson, isReturned',
-            expenses: 'id, timestamp, pharmacyId, category, amount, description, paymentMethod, receiptUrl',
+            expenses: 'id, timestamp, pharmacyId, amount, description, type',
             customers: 'id, name, phone, email, address, notes, createdAt',
             notifications: 'id, title, message, type, read, createdAt, data, timestamp',
             wantedItems: 'id, pharmacyId, itemName, notes, requestCount, status, createdAt, reminderAt',
@@ -102,12 +102,36 @@ class RahaDB extends Dexie {
                 window.location.reload();
             });
         });
-
         this.on('versionchange', () => {
             console.warn('🔄 Database version changed - deleting and reloading...');
             Dexie.delete('RahaDB').then(() => {
                 window.location.reload();
             });
+        });
+
+        // Add hooks for real-time sync
+        this.medicines.hook('creating', (primKey, obj, trans) => {
+            if (obj.pharmacyId && navigator.onLine) {
+                setTimeout(() => this.syncSingleMedicine(obj), 1000);
+            }
+        });
+
+        this.medicines.hook('updating', (modifications, primKey, obj, trans) => {
+            if (obj.pharmacyId && navigator.onLine) {
+                setTimeout(() => this.syncSingleMedicine({...obj, ...modifications}), 1000);
+            }
+        });
+
+        this.sales.hook('creating', (primKey, obj, trans) => {
+            if (obj.pharmacyId && navigator.onLine) {
+                setTimeout(() => this.syncSingleSale(obj), 1000);
+            }
+        });
+
+        this.expenses.hook('creating', (primKey, obj, trans) => {
+            if (obj.pharmacyId && navigator.onLine) {
+                setTimeout(() => this.syncSingleExpense(obj), 1000);
+            }
         });
     }
 
@@ -242,6 +266,189 @@ class RahaDB extends Dexie {
             return true;
         } catch (err) {
             console.error('❌ Full Sync Error:', err);
+            return false;
+        }
+    }
+
+    async syncSingleMedicine(medicine: any): Promise<void> {
+        try {
+            const supabase = await getSupabase();
+            if (!supabase) return;
+            
+            const { error } = await supabase
+                .from('medicines')
+                .upsert({
+                    id: medicine.id,
+                    pharmacy_id: medicine.pharmacyId,
+                    name: medicine.name,
+                    barcode: medicine.barcode,
+                    price: medicine.price,
+                    cost_price: medicine.costPrice,
+                    stock: medicine.stock,
+                    category: medicine.category,
+                    expiry_date: medicine.expiryDate,
+                    supplier: medicine.supplier,
+                    supplier_phone: medicine.supplierPhone,
+                    added_date: medicine.addedDate,
+                    usage_count: medicine.usageCount,
+                    last_sold: medicine.lastSold,
+                    units_per_pkg: medicine.unitsPerPkg,
+                    min_stock_alert: medicine.minStockAlert
+                });
+            
+            if (error) {
+                console.error('❌ Single medicine sync error:', error);
+            }
+        } catch (err) {
+            console.error('❌ Single medicine sync error:', err);
+        }
+    }
+
+    async syncSingleSale(sale: any): Promise<void> {
+        try {
+            const supabase = await getSupabase();
+            if (!supabase) return;
+            
+            const itemsJson = JSON.parse(sale.itemsJson || '[]');
+            const { error } = await supabase
+                .from('sales')
+                .upsert({
+                    id: sale.id,
+                    timestamp: sale.timestamp,
+                    pharmacy_id: sale.pharmacyId,
+                    total_amount: sale.totalAmount,
+                    discount: sale.discount,
+                    net_amount: sale.netAmount,
+                    cash_amount: sale.cashAmount,
+                    bank_amount: sale.bankAmount,
+                    debt_amount: sale.debtAmount,
+                    bank_trx_id: sale.bankTrxId,
+                    customer_name: sale.customerName,
+                    total_cost: sale.totalCost,
+                    profit: sale.profit,
+                    items_json: itemsJson,
+                    is_returned: sale.isReturned
+                });
+            
+            if (error) {
+                console.error('❌ Single sale sync error:', error);
+            }
+        } catch (err) {
+            console.error('❌ Single sale sync error:', err);
+        }
+    }
+
+    async syncSingleExpense(expense: any): Promise<void> {
+        try {
+            const supabase = await getSupabase();
+            if (!supabase) return;
+            
+            const { error } = await supabase
+                .from('expenses')
+                .upsert({
+                    id: expense.id,
+                    timestamp: expense.timestamp,
+                    pharmacy_id: expense.pharmacyId,
+                    amount: expense.amount,
+                    description: expense.description,
+                    type: expense.type
+                });
+            
+            if (error) {
+                console.error('❌ Single expense sync error:', error);
+            }
+        } catch (err) {
+            console.error('❌ Single expense sync error:', err);
+        }
+    }
+
+    async syncToCloud(pharmacyId: string): Promise<boolean> {
+        const startTime = Date.now();
+        try {
+            const supabase = await getSupabase();
+            if (!supabase) {
+                console.error('❌ Supabase not available');
+                return false;
+            }
+
+            // Sync medicines to cloud
+            const localMedicines = await this.medicines.where('pharmacyId').equals(pharmacyId).toArray();
+            for (const med of localMedicines) {
+                const { error } = await supabase
+                    .from('medicines')
+                    .upsert({
+                        id: med.id,
+                        pharmacy_id: med.pharmacyId,
+                        name: med.name,
+                        barcode: med.barcode,
+                        price: med.price,
+                        cost_price: med.costPrice,
+                        stock: med.stock,
+                        category: med.category,
+                        expiry_date: med.expiryDate,
+                        supplier: med.supplier,
+                        supplier_phone: med.supplierPhone,
+                        added_date: med.addedDate,
+                        usage_count: med.usageCount,
+                        last_sold: med.lastSold,
+                        units_per_pkg: med.unitsPerPkg,
+                        min_stock_alert: med.minStockAlert
+                    });
+                if (error) {
+                    console.error('❌ Medicine sync error:', error);
+                }
+            }
+
+            // Sync sales to cloud
+            const localSales = await this.sales.where('pharmacyId').equals(pharmacyId).toArray();
+            for (const sale of localSales) {
+                const itemsJson = JSON.parse(sale.itemsJson || '[]');
+                const { error } = await supabase
+                    .from('sales')
+                    .upsert({
+                        id: sale.id,
+                        timestamp: sale.timestamp,
+                        pharmacy_id: sale.pharmacyId,
+                        total_amount: sale.totalAmount,
+                        discount: sale.discount,
+                        net_amount: sale.netAmount,
+                        cash_amount: sale.cashAmount,
+                        bank_amount: sale.bankAmount,
+                        debt_amount: sale.debtAmount,
+                        bank_trx_id: sale.bankTrxId,
+                        customer_name: sale.customerName,
+                        total_cost: sale.totalCost,
+                        profit: sale.profit,
+                        items_json: itemsJson,
+                        is_returned: sale.isReturned
+                    });
+                if (error) {
+                    console.error('❌ Sale sync error:', error);
+                }
+            }
+
+            // Sync expenses to cloud
+            const localExpenses = await this.expenses.where('pharmacyId').equals(pharmacyId).toArray();
+            for (const expense of localExpenses) {
+                const { error } = await supabase
+                    .from('expenses')
+                    .upsert({
+                        id: expense.id,
+                        timestamp: expense.timestamp,
+                        pharmacy_id: expense.pharmacyId,
+                        amount: expense.amount,
+                        description: expense.description,
+                        type: expense.type
+                    });
+                if (error) {
+                    console.error('❌ Expense sync error:', error);
+                }
+            }
+
+            this.logPerformance('syncToCloud', startTime);
+            return true;
+        } catch (err) {
+            console.error('❌ Sync to cloud error:', err);
             return false;
         }
     }
