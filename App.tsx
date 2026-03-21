@@ -136,7 +136,10 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const initAuth = async () => {
+            console.log('🔍 Starting initAuth...');
             const saved = await db.pharmacies.toCollection().first();
+            console.log('🔍 Saved pharmacy found:', saved);
+            
             if (saved) {
                 console.log('🔍 Found saved pharmacy:', saved.pharmacyKey);
                 
@@ -163,6 +166,7 @@ const App: React.FC = () => {
                 console.log('🔍 Auto-login successful');
                 setCurrentPharmacy(saved);
                 setIsAuthenticated(true);
+                localStorage.setItem('raha_pro_activated', 'true');
                 
                 // فقط تحميل البيانات المحلية، لا مزامنة تلقائية
                 loadData();
@@ -186,6 +190,7 @@ const App: React.FC = () => {
                     }
                 }
             } else {
+                console.log('🔍 No saved pharmacy found');
                 setIsAuthenticated(false);
             }
         };
@@ -206,7 +211,16 @@ const App: React.FC = () => {
         return () => {
             clearTimeout(rTimer);
         };
-    }, [loadData, triggerNotif]);
+    }, []); // Empty dependencies - run only once
+
+    // Re-check authentication state after data loads
+    useEffect(() => {
+        if (isAuthenticated && currentPharmacy) {
+            console.log('🔍 Auth state confirmed - user is logged in');
+        } else if (!isAuthenticated) {
+            console.log('🔍 Auth state - user not authenticated');
+        }
+    }, [isAuthenticated, currentPharmacy]);
 
     const toggleSelect = useCallback((id: string) => {
         setSelectedIds(prev => {
