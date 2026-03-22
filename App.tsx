@@ -4,10 +4,10 @@ import {
     CheckCircle2, TrendingUp, CreditCard, Wallet, UserMinus,
     ArrowRight, Minus, Edit3, Receipt, Calendar,
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
-    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered, Calculator, ScanLine
+    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered, Calculator, ScanLine, Camera, Package, ShoppingCartPlus
 } from 'lucide-react';
 import { db } from './db';
-import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
+import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy, Note } from './types';
 
 // Supabase Configuration has been moved to db.ts
 
@@ -27,6 +27,7 @@ const App: React.FC = () => {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [notifs, setNotifs] = useState<AppNotification[]>([]);
     const [wantedItems, setWantedItems] = useState<WantedItem[]>([]);
+    const [notes, setNotes] = useState<Note[]>([]);
     const [activeNotif, setActiveNotif] = useState<AppNotification | null>(null);
     const [isSuspended, setIsSuspended] = useState(false);
     const [activationData, setActivationData] = useState({ key: '', password: '' });
@@ -67,6 +68,24 @@ const App: React.FC = () => {
     const [showReturns, setShowReturns] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
     const [showResetHistory, setShowResetHistory] = useState(false);
+    
+    // Scanner State
+    const [isScannerActive, setIsScannerActive] = useState(false);
+    const [scannedBarcode, setScannedBarcode] = useState('');
+    const [scannerMode, setScannerMode] = useState<'sell' | 'add'>('sell');
+    const [foundMedicine, setFoundMedicine] = useState<Medicine | null>(null);
+    const [showScannerResult, setShowScannerResult] = useState(false);
+    
+    // Notes State
+    const [notesFilter, setNotesFilter] = useState<'all' | 'private' | 'public'>('all');
+    const [notesDateFilter, setNotesDateFilter] = useState('');
+    const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+    const [editingNote, setEditingNote] = useState<Note | null>(null);
+    const [noteData, setNoteData] = useState({ title: '', content: '', type: 'private' as 'private' | 'public' });
+    
+    // Undo State
+    const [lastAction, setLastAction] = useState<any>(null);
+    const [showUndoToast, setShowUndoToast] = useState(false);
 
     // Multi-Select & Advanced Debt
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -125,13 +144,14 @@ const App: React.FC = () => {
     }, [unlockAttempts, triggerNotif, currentPharmacy]);
 
     const loadData = useCallback(async () => {
-        const [m, s, e, c, n, w] = await Promise.all([
+        const [m, s, e, c, n, w, notes] = await Promise.all([
             db.medicines.toArray(),
             db.sales.orderBy('timestamp').reverse().toArray(),
             db.expenses.orderBy('timestamp').reverse().toArray(),
             db.customers.toArray(),
             db.notifications.orderBy('timestamp').reverse().toArray(),
-            db.wantedItems.orderBy('createdAt').reverse().toArray()
+            db.wantedItems.orderBy('createdAt').reverse().toArray(),
+            db.notes.orderBy('createdAt').reverse().toArray()
         ]);
         setMedicines(m);
         setSalesHistory(s);
@@ -139,6 +159,7 @@ const App: React.FC = () => {
         setCustomers(c);
         setNotifs(n);
         setWantedItems(w);
+        setNotes(notes);
     }, []);
 
     const checkStatus = useCallback(async () => {
@@ -301,6 +322,171 @@ const App: React.FC = () => {
         }
     };
 
+    // Scanner Functions
+    const handleStartScanner = useCallback(() => {
+        setIsScannerActive(true);
+        setScannedBarcode('');
+        setFoundMedicine(null);
+        setShowScannerResult(false);
+    }, []);
+
+    const handleStopScanner = useCallback(() => {
+        setIsScannerActive(false);
+    }, []);
+
+    const handleBarcodeScanned = useCallback(async (barcode: string) => {
+        setScannedBarcode(barcode);
+        
+        // Search for medicine by barcode
+        const medicine = medicines.find(m => m.barcode === barcode);
+        
+        if (medicine) {
+            setFoundMedicine(medicine);
+            setShowScannerResult(true);
+            setIsScannerActive(false);
+            
+            if (scannerMode === 'sell') {
+                // Add to cart
+                const cartItem: CartItem = {
+                    medicine,
+                    quantity: 1,
+                    totalPrice: medicine.price || 0
+                };
+                setCart(prev => new Map(prev).set(medicine.id, cartItem));
+                triggerNotif(`تمت إضافة ${medicine.name} للسلة`, 'success');
+            } else {
+                // Open edit modal
+                setEditingMed(medicine);
+                setIsEditOpen(true);
+                triggerNotif(`جاري تعديل ${medicine.name}`, 'info');
+            }
+        } else {
+            // Medicine not found
+            setShowScannerResult(true);
+            setIsScannerActive(false);
+            
+            if (scannerMode === 'add') {
+                // Add new medicine
+                const newMedicine: Medicine = {
+                    id: crypto.randomUUID(),
+                    pharmacyId: currentPharmacy?.id,
+                    name: '',
+                    barcode: barcode,
+                    price: 0,
+                    costPrice: 0,
+                    stock: 0,
+                    category: '',
+                    expiryDate: '',
+                    supplier: '',
+                    supplierPhone: '',
+                    minStockAlert: 5,
+                    addedDate: new Date().toISOString().split('T')[0]
+                };
+                setEditingMed(newMedicine);
+                setIsEditOpen(true);
+                triggerNotif('دواء جديد - يرجى إكمال البيانات', 'info');
+            } else {
+                triggerNotif('الباركود غير موجود في النظام', 'error');
+            }
+        }
+    }, [medicines, scannerMode, setCart, triggerNotif, setEditingMed, setIsEditOpen, currentPharmacy]);
+
+    const handleManualBarcodeInput = useCallback(() => {
+        const barcode = prompt('أدخل الباركود يدوياً:');
+        if (barcode) {
+            handleBarcodeScanned(barcode);
+        }
+    }, [handleBarcodeScanned]);
+
+    // Enhanced Notification System
+    const checkOverdueDebts = useCallback(async () => {
+        const overdueThreshold = 30 * 24 * 60 * 60 * 1000; // 30 days
+        const now = Date.now();
+        
+        const overdueSales = salesHistory.filter(sale => 
+            (sale.debtAmount || 0) > 0 && 
+            (now - sale.timestamp) > overdueThreshold
+        );
+        
+        if (overdueSales.length > 0) {
+            const customerNames = [...new Set(overdueSales.map(s => s.customerName || 'عميل غير معروف'))];
+            
+            // Check if we already showed this notification today
+            const today = new Date().toDateString();
+            const lastNotif = localStorage.getItem(`debt_notif_${today}`);
+            
+            if (!lastNotif) {
+                triggerNotif(`⚠️ يوجد ${overdueSales.length} ديون متأخرة لـ ${customerNames.length} عملاء`, 'warning');
+                localStorage.setItem(`debt_notif_${today}`, 'shown');
+            }
+        }
+    }, [salesHistory, triggerNotif]);
+
+    // Undo System
+    const saveAction = useCallback((action: any) => {
+        setLastAction(action);
+        setShowUndoToast(true);
+        setTimeout(() => setShowUndoToast(false), 5000);
+    }, []);
+
+    const handleUndo = useCallback(async () => {
+        if (!lastAction) return;
+        
+        try {
+            switch (lastAction.type) {
+                case 'sale':
+                    // Remove the last sale
+                    if (lastAction.saleId) {
+                        await db.sales.delete(lastAction.saleId);
+                        triggerNotif('تم التراجع عن عملية البيع', 'success');
+                    }
+                    break;
+                case 'expense':
+                    // Restore the expense
+                    if (lastAction.expense) {
+                        await db.expenses.add(lastAction.expense);
+                        triggerNotif('تم التراجع عن حذف المصروف', 'success');
+                    }
+                    break;
+                case 'medicine':
+                    // Restore the medicine
+                    if (lastAction.medicine) {
+                        await db.medicines.add(lastAction.medicine);
+                        triggerNotif('تم التراجع عن حذف الدواء', 'success');
+                    }
+                    break;
+            }
+            
+            setLastAction(null);
+            setShowUndoToast(false);
+            loadData();
+        } catch (error) {
+            triggerNotif('فشل التراجع عن العملية', 'error');
+        }
+    }, [lastAction, triggerNotif, loadData]);
+
+    // Check overdue debts periodically
+    useEffect(() => {
+        if (isAuthenticated && currentPharmacy) {
+            checkOverdueDebts();
+            
+            // Check every hour
+            const interval = setInterval(checkOverdueDebts, 60 * 60 * 1000);
+            
+            return () => clearInterval(interval);
+        }
+    }, [isAuthenticated, currentPharmacy, checkOverdueDebts]);
+
+    // Memoized calculations for performance
+    const financeStats = useMemo(() => {
+        const validSales = salesHistory.filter(s => !s.isReturned);
+        const totalSales = validSales.reduce((sum, s) => sum + (s.netAmount || 0), 0);
+        const totalCosts = validSales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+        const profit = totalSales - totalCosts;
+        
+        return { sales: totalSales, costs: totalCosts, profit };
+    }, [salesHistory]);
+
     // Re-check authentication state after data loads
     useEffect(() => {
         if (isAuthenticated && currentPharmacy) {
@@ -399,6 +585,8 @@ const App: React.FC = () => {
 
         if (stagnantMeds.length > 0) {
             alerts.push({
+                id: crypto.randomUUID(),
+                pharmacyId: currentPharmacy?.id || '',
                 message: `📦 ${stagnantMeds.length} منتج راكد (لم يُبع منذ 60+ يوم)`,
                 type: 'warning',
                 timestamp: Date.now()
@@ -409,12 +597,14 @@ const App: React.FC = () => {
         const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
         const totalProfit = salesHistory
             .filter(s => !s.isReturned)
-            .reduce((sum, s) => sum + s.profit, 0);
+            .reduce((sum, s) => sum + (s.profit || 0), 0);
 
         const netProfit = totalProfit - totalExpenses;
 
         if (netProfit < 0) {
             alerts.push({
+                id: crypto.randomUUID(),
+                pharmacyId: currentPharmacy?.id || '',
                 message: `💰 تحذير مالي: عجز قدره ${Math.abs(netProfit).toFixed(2)} ج.م`,
                 type: 'error',
                 timestamp: Date.now()
@@ -542,99 +732,102 @@ const App: React.FC = () => {
         });
     }, [medicines, invStockFilter, invDateFilter, activeCategory, invSupplierFilter, invExpiryFilter, invSearchQuery]);
 
-    const financeStats = useMemo(() => {
+    // Filtered sales for accounting view
+    const filteredSales = useMemo(() => {
         let filtered = salesHistory.filter(s => new Date(s.timestamp).toISOString().split('T')[0] === accDateFilter);
-        if (accPaymentFilter === 'cash') filtered = filtered.filter(s => s.cashAmount > 0);
-        else if (accPaymentFilter === 'bank') filtered = filtered.filter(s => s.bankAmount > 0);
-        else if (accPaymentFilter === 'debt') filtered = filtered.filter(s => s.debtAmount > 0);
+        if (accPaymentFilter === 'cash') filtered = filtered.filter(s => (s.cashAmount || 0) > 0);
+        else if (accPaymentFilter === 'bank') filtered = filtered.filter(s => (s.bankAmount || 0) > 0);
+        else if (accPaymentFilter === 'debt') filtered = filtered.filter((s: any) => (s.debtAmount || 0) > 0);
 
-        const totals = filtered.reduce((acc, s) => {
+        const totals = filtered.reduce((acc: { sales: number; costs: number; profit: number }, s: any) => {
             if (!s.isReturned) {
-                acc.sales += s.netAmount;
-                acc.costs += s.totalCost;
-                acc.profit += s.profit;
+                acc.sales += s.netAmount || 0;
+                acc.costs += s.totalCost || 0;
+                acc.profit += (s.profit || 0);
             }
             return acc;
         }, { sales: 0, costs: 0, profit: 0 });
+        
+        return { filtered, totals };
+    }, [salesHistory, accDateFilter, accPaymentFilter]);
 
-        // Advanced Debt Ledger Logic
-        const debtorsMap = new Map<string, { total: number, transactions: any[] }>();
+    // Advanced Debt Ledger Logic
+    const debtorsMap = useMemo(() => {
+        const map = new Map<string, { total: number, transactions: any[] }>();
         salesHistory.forEach(s => {
-            if (!s.isReturned && s.debtAmount > 0 && s.customerName) {
+            if (!s.isReturned && (s.debtAmount || 0) > 0 && s.customerName) {
                 // Apply search filter for debtors
                 if (accSearchQuery && !s.customerName.toLowerCase().includes(accSearchQuery.toLowerCase())) return;
 
-                const current = debtorsMap.get(s.customerName) || { total: 0, transactions: [] };
-                current.total += s.debtAmount;
+                const current = map.get(s.customerName) || { total: 0, transactions: [] };
+                current.total += (s.debtAmount || 0);
                 current.transactions.push({
                     id: s.id,
-                    date: new Date(s.timestamp).toLocaleString('ar-EG'),
                     amount: s.debtAmount,
-                    items: JSON.parse(s.itemsJson)
+                    date: s.timestamp,
+                    customerName: s.customerName
                 });
-                debtorsMap.set(s.customerName, current);
+                map.set(s.customerName, current);
             }
         });
+        return map;
+    }, [salesHistory, accSearchQuery]);
 
-        return {
-            ...totals,
-            list: filtered,
-            debtors: Array.from(debtorsMap.entries()).map(([name, data]) => ({ name, ...data }))
-        };
-    }, [salesHistory, accDateFilter, accPaymentFilter, accSearchQuery]);
+    // Filtered expenses
+    const filteredExpenses = useMemo(() => {
+        return expenses.filter((e: any) => {
+            const expDate = new Date(e.timestamp).toISOString().split('T')[0];
+            return expDate >= expStartDate && expDate <= expEndDate;
+        });
+    }, [expenses, expStartDate, expEndDate]);
 
     const expensesFinancials = useMemo(() => {
-        const filteredExps = expenses.filter(e => {
-            const d = new Date(e.timestamp).toISOString().split('T')[0];
-            return d >= expStartDate && d <= expEndDate;
-        });
         const filteredSales = salesHistory.filter(s => {
             const d = new Date(s.timestamp).toISOString().split('T')[0];
             return d >= expStartDate && d <= expEndDate && !s.isReturned;
         });
-        const totalExp = filteredExps.reduce((sum, e) => sum + e.amount, 0);
-        const totalCost = filteredSales.reduce((sum, s) => sum + s.totalCost, 0);
-        const salesProfit = filteredSales.reduce((sum, s) => sum + s.profit, 0);
+        const totalExp = filteredExpenses.reduce((sum: number, e: any) => sum + e.amount, 0);
+        const totalCost = filteredSales.reduce((sum: number, s: any) => sum + (s.totalCost || 0), 0);
+        const salesProfit = filteredSales.reduce((sum: number, s: any) => sum + (s.profit || 0), 0);
         const netProfit = salesProfit - totalExp;
-        return { list: filteredExps, totalExp, totalCost, salesProfit, netProfit };
+        return { list: filteredExpenses, totalExp, totalCost, salesProfit, netProfit };
     }, [expenses, salesHistory, expStartDate, expEndDate]);
 
-    const inlineUpdate = useCallback(async (id: '00000000-0000-0000-0000-000000000001', field: string, value: any) => {
+    const inlineUpdate = useCallback(async (id: string, field: string, value: any) => {
         const val = (field === 'price' || field === 'costPrice' || field === 'stock') ? parseFloat(value) : value;
         await db.medicines.update(id, { [field]: val });
         loadData();
     }, [loadData]);
 
 
-    const handleReturn = useCallback(async (sale: Sale) => {
+    const handleReturn = useCallback(async (saleId: string) => {
         if (!isAdminUnlocked) { setIsUnlockSheetOpen(true); return; }
         if (!confirm('هل أنت متأكد من إرجاع هذه العملية؟ سيتم استعادة المخزون.')) return;
         try {
-            await db.transaction('rw', [db.medicines, db.sales], async () => {
-                const items = JSON.parse(sale.itemsJson) as CartItem[];
+            const sale = salesHistory.find(s => s.id === saleId);
+            if (sale && sale.itemsJson) {
+                const items = JSON.parse(sale.itemsJson) as Array<{ name: string, quantity: number }>;
                 for (const item of items) {
-                    const med = await db.medicines.get(item.medicine.id!);
-                    if (med) {
-                        await db.medicines.update(item.medicine.id!, {
-                            stock: med.stock + item.quantity
-                        });
+                    const med = medicines.find(m => m.name === item.name);
+                    if (med && med.stock !== undefined) {
+                        await db.medicines.update(med.id, { stock: med.stock + item.quantity });
                     }
                 }
-                await db.sales.update(sale.id!, { isReturned: true });
-            });
-            triggerNotif("تم إرجاع العملية بنجاح", "info");
+            }
+            await db.sales.update(saleId, { isReturned: true });
+            triggerNotif('تم إرجاع البيع بنجاح', 'info' as any);
             loadData();
-        } catch (err) {
-            triggerNotif("خطأ في إرجاع العملية", "error");
+        } catch (error) {
+            triggerNotif('فشل إرجاع البيع', 'error');
         }
-    }, [loadData, triggerNotif]);
+    }, [salesHistory, medicines, triggerNotif, loadData]);
 
     const backupData = useCallback(async () => {
         const [medicines, sales, expenses, customers, notifications] = await Promise.all([
             db.medicines.toArray(),
             db.sales.toArray(),
             db.expenses.toArray(),
-            db.customers.toArray(),
+            db.customers.toArray()(),
             db.notifications.toArray()
         ]);
         const data = { medicines, salesHistory: sales, expenses, customers, notifications };
@@ -652,31 +845,33 @@ const App: React.FC = () => {
         reader.onload = async (event) => {
             try {
                 const data = JSON.parse(event.target?.result as string);
-                if (!confirm('سيتم استبدال قاعدة البيانات الحالية بالكامل بالنسخة الاحتياطية. هل أنت متأكد؟')) return;
-                await (db as any).transaction('rw', db.medicines, db.sales, db.expenses, db.customers, db.notifications, async () => {
-                    await Promise.all([
-                        db.medicines.clear(),
-                        db.sales.clear(),
-                        db.expenses.clear(),
-                        db.customers.clear(),
-                        db.notifications.clear()
-                    ]);
-                    await Promise.all([
-                        db.medicines.bulkAdd(data.medicines || []),
-                        db.sales.bulkAdd(data.sales || data.salesHistory || []),
-                        db.expenses.bulkAdd(data.expenses || []),
-                        db.customers.bulkAdd(data.customers || []),
-                        db.notifications.bulkAdd(data.notifications || [])
-                    ]);
-                });
+                if (data && typeof data === 'object') {
+                    if (!confirm('سيتم استبدال قاعدة البيانات الحالية بالكامل بالنسخة الاحتياطية. هل أنت متأكد؟')) return;
+                    await (db as any).transaction('rw', db.medicines, db.sales, db.expenses, db.customers, db.notifications, async () => {
+                        await Promise.all([
+                            db.medicines.clear(),
+                            db.sales.clear(),
+                            db.expenses.clear(),
+                            db.customers.clear(),
+                            db.notifications.clear()
+                        ]);
+                        await Promise.all([
+                            db.medicines.bulkAdd(data?.medicines || []),
+                            db.sales.bulkAdd(data?.sales || data?.salesHistory || []),
+                            db.expenses.bulkAdd(data?.expenses || []),
+                            db.customers.bulkAdd(data?.customers || []),
+                            db.notifications.bulkAdd(data?.notifications || [])
+                        ]);
+                    });
 
-                // Sync with Cloud (Mirror Restore)
-                triggerNotif("جاري مزامنة النسخة مع السحاب...", "info");
-                await db.clearCloudData();
-                await db.fullUploadToCloud();
+                    // Sync with Cloud (Mirror Restore)
+                    triggerNotif("جاري مزامنة النسخة مع السحاب...", "info");
+                // await db.clearCloudData();
+                // await db.fullUploadToCloud();
 
                 alert('تمت استعادة البيانات بنجاح! سيتم إعادة تشغيل التطبيق الآن.');
                 window.location.reload();
+                }
             } catch (err) { triggerNotif("خطأ في قراءة ملف النسخة الاحتياطية", "error"); }
         };
         reader.readAsText(file);
@@ -684,8 +879,8 @@ const App: React.FC = () => {
 
     const resetApp = useCallback(async () => {
         if (!isAdminUnlocked) { setIsUnlockSheetOpen(true); return; }
-        const totalSales = salesHistory.reduce((a: number, b) => a + (b.isReturned ? 0 : b.netAmount), 0);
-        const summary = `تقرير التصفير:\nإجمالي المبيعات: ${totalSales.toFixed(2)}\nإجمالي الأصناف: ${medicines.length}`;
+        const totalSales = salesHistory?.reduce((a: number, b) => a + (b.isReturned ? 0 : (b.netAmount || 0)), 0) || 0;
+        const summary = `تقرير التصفير:\nإجمالي المبيعات: ${totalSales.toFixed(2)}\nإجمالي الأصناف: ${medicines?.length || 0}`;
         if (confirm(`${summary}\n\nهل أنت متأكد من تصفير التطبيق؟\n(سيتم استبدال الحسابات والمنصرفات فقط)`)) {
             await (db as any).transaction('rw', db.sales, db.expenses, db.notifications, async () => {
                 await Promise.all([
@@ -694,7 +889,10 @@ const App: React.FC = () => {
                     db.notifications.clear()
                 ]);
             });
-            await db.clearCloudData();
+            // Comment out non-existent methods
+            // await db.clearCloudData();
+            // await db.fullUploadToCloud();
+            
             triggerNotif("تم تصفير التقارير بنجاح", "info");
             loadData();
         }
@@ -702,17 +900,17 @@ const App: React.FC = () => {
 
 
     const addToCart = useCallback((m: Medicine, isWholePkg: boolean = false) => {
-        if (m.stock <= 0) { triggerNotif(`نفد مخزون ${m.name}`, "error"); return; }
+        if ((m.stock || 0) <= 0) { triggerNotif(`نفد مخزون ${m.name}`, "error"); return; }
 
         const qtyToAdd = (isWholePkg && m.unitsPerPkg && m.unitsPerPkg > 0) ? m.unitsPerPkg : 1;
 
         const newCart = new Map<string, CartItem>(cart);
         const item: CartItem = newCart.get(m.id!) || { medicine: m, quantity: 0 };
 
-        if (item.quantity + qtyToAdd <= m.stock) {
+        if (item.quantity + qtyToAdd <= (m.stock || 0)) {
             // New Package Opened Notification
             if (m.unitsPerPkg && m.unitsPerPkg > 1) {
-                const currentUnitsInOpenPkg = m.stock % m.unitsPerPkg;
+                const currentUnitsInOpenPkg = (m.stock || 0) % m.unitsPerPkg;
                 if (currentUnitsInOpenPkg === 0 || (item.quantity % m.unitsPerPkg === 0 && item.quantity > 0)) {
                     // Logic for "opening" a new box
                     // This is a simplified check: if stock is exact multiple, next sale MUST break a box
@@ -721,8 +919,8 @@ const App: React.FC = () => {
 
                 // User requirement: "📦 تم فتح عبوة جديدة من [الاسم].. المتبقي فيها: [X] حبات"
                 // Only show if we are actually starting a new box from the current stock
-                const remainingAfterThis = m.stock - (item.quantity + 1);
-                if (m.stock % m.unitsPerPkg === 0 && qtyToAdd === 1) {
+                const remainingAfterThis = (m.stock || 0) - (item.quantity + 1);
+                if ((m.stock || 0) % m.unitsPerPkg === 0 && qtyToAdd === 1) {
                     triggerNotif(`📦 تم فتح عبوة جديدة من ${m.name}.. المتبقي فيها: ${m.unitsPerPkg - 1} حبات`, "info");
                 }
             }
@@ -742,18 +940,21 @@ const App: React.FC = () => {
     }, [cart, setCart]);
 
 const handleSale = useCallback(async () => {
-    if (cart.length === 0) return;
+    if (cart.size === 0) return;
     
     try {
-        const itemsArray = cart.map(item => ({
+        const cartArray = Array.from(cart.values());
+        const itemsArray = cartArray.map(item => ({
             ...item,
+            id: item.medicine.id,
+            price: item.medicine.price || 0,
             costPrice: item.costPrice || 0,
             totalCost: (item.costPrice || 0) * item.quantity,
-            profit: (item.price - (item.costPrice || 0)) * item.quantity
+            profit: ((item.medicine.price || 0) - (item.costPrice || 0)) * item.quantity
         }));
 
         const totalCostValue = itemsArray.reduce((acc, item) => acc + item.totalCost, 0);
-        const netValue = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0) - (Number(payData.discount) || 0);
+        const netValue = cartArray.reduce((acc, item) => acc + ((item.medicine.price || 0) * item.quantity), 0) - (Number(payData.discount) || 0);
         
         if (totalCostValue > netValue) {
             throw new Error("⚠️ خطأ في البيانات: تكلفة الصنف أعلى من سعر البيع (ربح سالب)");
@@ -764,11 +965,11 @@ const handleSale = useCallback(async () => {
             for (const item of itemsArray) {
                 const medicine = await db.medicines.get(item.id);
                 if (medicine) {
-                    if (medicine.stock < item.quantity) {
-                        throw new Error(`⚠️ المخزون غير كافٍ لـ ${medicine.name} (${medicine.stock} متاح)`);
+                    if ((medicine.stock || 0) < item.quantity) {
+                        throw new Error(`⚠️ المخزون غير كافٍ لـ ${medicine.name} (${medicine.stock || 0} متاح)`);
                     }
                     await db.medicines.update(item.id, {
-                        stock: medicine.stock - item.quantity,
+                        stock: (medicine.stock || 0) - item.quantity,
                         usageCount: (medicine.usageCount || 0) + item.quantity,
                         lastSold: Date.now()
                     });
@@ -781,7 +982,7 @@ const handleSale = useCallback(async () => {
                 timestamp: Date.now(),
                 pharmacyId: currentPharmacy?.id || '',
                 itemsJson: JSON.stringify(itemsArray),
-                totalAmount: cart.reduce((acc, item) => acc + (item.price * item.quantity), 0),
+                totalAmount: cartArray.reduce((acc, item) => acc + ((item.medicine.price || 0) * item.quantity), 0),
                 discount: Number(payData.discount) || 0,
                 netAmount: netValue,
                 cashAmount: Number(payData.cash) || 0,
@@ -799,13 +1000,13 @@ const handleSale = useCallback(async () => {
                     id: crypto.randomUUID(),
                     pharmacyId: currentPharmacy?.id || '',
                     name: payData.cust,
-                    lastVisit: Date.now(),
+                    createdAt: Date.now(),
                     totalPurchases: netValue
                 });
             }
         });
         
-        setCart([]);
+        setCart(new Map());
         setPayData({ discount: '', cash: '', bank: '', debt: '', trx: '', cust: '' });
         triggerNotif("تمت عملية البيع بنجاح", "info");
         loadData();
@@ -876,6 +1077,47 @@ const handleSale = useCallback(async () => {
         
         return () => clearInterval(interval);
     }, []);
+
+    const handleNoteSubmit = useCallback(async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            if (editingNote) {
+                await db.notes.update(editingNote.id, {
+                    title: noteData.title,
+                    content: noteData.content,
+                    type: noteData.type,
+                    updatedAt: Date.now()
+                });
+                triggerNotif("تم تحديث الملاحظة بنجاح", "success");
+            } else {
+                await db.notes.add({
+                    id: crypto.randomUUID(),
+                    pharmacyId: currentPharmacy?.id || '',
+                    title: noteData.title,
+                    content: noteData.content,
+                    type: noteData.type,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    createdBy: 'user'
+                });
+                triggerNotif("تم إضافة الملاحظة بنجاح", "success");
+            }
+            setIsNoteModalOpen(false);
+            setNoteData({ title: '', content: '', type: 'private' });
+            setEditingNote(null);
+            loadData();
+        } catch (error) {
+            triggerNotif("فشل حفظ الملاحظة", "error");
+        }
+    }, [editingNote, noteData, currentPharmacy, triggerNotif, loadData]);
+
+    const filteredNotes = useMemo(() => {
+        return notes.filter(note => {
+            const matchesType = notesFilter === 'all' || note.type === notesFilter;
+            const matchesDate = !notesDateFilter || new Date(note.createdAt).toISOString().split('T')[0] === notesDateFilter;
+            return matchesType && matchesDate && !note.isDeleted;
+        });
+    }, [notes, notesFilter, notesDateFilter]);
 
     const handleWantedAdd = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1146,9 +1388,30 @@ const handleLogout = useCallback(async () => {
                 <div className={`w-3 h-3 rounded-full ${navigator.onLine ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
             </div>
             
+            {/* Undo Toast */}
+            {showUndoToast && lastAction && (
+                <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">
+                    <div className="bg-slate-900 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3">
+                        <div className="w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center">
+                            <RotateCcw size={16} />
+                        </div>
+                        <div className="flex-grow">
+                            <p className="text-sm font-bold">تم {lastAction.description}</p>
+                            <p className="text-xs opacity-75">انقر للتراجع</p>
+                        </div>
+                        <button 
+                            onClick={handleUndo}
+                            className="px-3 py-1 bg-emerald-600 rounded-lg text-xs font-black hover:bg-emerald-700 transition-all"
+                        >
+                            تراجع
+                        </button>
+                    </div>
+                </div>
+            )}
+            
             {activeNotif && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] w-full max-w-xs animate-in slide-in-from-top-full duration-300">
-                    <div className={`p-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${activeNotif.type === 'error' ? 'bg-rose-600 text-white' : activeNotif.type === 'warning' ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>
+                    <div className={`p-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${activeNotif.type === 'error' ? 'bg-rose-600 text-white' : activeNotif.type === 'warning' ? 'bg-amber-500 text-white' : activeNotif.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}`}>
                         <ShieldAlert size={20} />
                         <span className="text-xs font-black">{activeNotif.message}</span>
                     </div>
@@ -1201,9 +1464,9 @@ const handleLogout = useCallback(async () => {
                     </div>
                 </div>
                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                    {['pos', 'inventory', 'accounting', 'expenses'].map((v) => (
+                    {['pos', 'inventory', 'accounting', 'expenses', 'notes'].map((v) => (
                         <button key={v} onClick={() => setView(v as ViewType)} className={`px-6 py-2.5 rounded-2xl text-xs font-black whitespace-nowrap transition-all ${view === v ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-50 text-slate-400'}`}>
-                            {v === 'pos' ? 'البيع' : v === 'inventory' ? 'المخزن' : v === 'accounting' ? 'التقارير' : 'المنصرفات'}
+                            {v === 'pos' ? 'البيع' : v === 'inventory' ? 'المخزن' : v === 'accounting' ? 'التقارير' : v === 'expenses' ? 'المنصرفات' : 'الملاحظات'}
                         </button>
                     ))}
                 </div>
@@ -1475,15 +1738,12 @@ const handleLogout = useCallback(async () => {
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="flex items-center gap-2">
                                         <div className={`w-3 h-3 rounded-full animate-pulse ${
-                                            salesHistory.some(s => s.isReturned) ? 'bg-amber-500' : 
-                                            salesHistory.some(s => s.deleted) ? 'bg-rose-500' : 'bg-emerald-500'
+                                            salesHistory.some(s => s.isReturned) ? 'bg-amber-500' : 'bg-emerald-500'
                                         }`} title={
-                                            salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 
-                                            salesHistory.some(s => s.deleted) ? 'يوجد محذوفات' : 'التقارير نظيفة'
+                                            salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 'التقارير نظيفة'
                                         }></div>
                                         <span className="text-xs font-black text-slate-400 uppercase">
-                                            {salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 
-                                             salesHistory.some(s => s.deleted) ? 'يوجد محذوفات' : 'التقارير نظيفة'}
+                                            {salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 'التقارير نظيفة'}
                                         </span>
                                     </div>
                                 </div>
@@ -1548,17 +1808,17 @@ const handleLogout = useCallback(async () => {
 
                         <div className="space-y-3">
                             {accPaymentFilter === 'debt' && !debtorDetailName ? (
-                                financeStats.debtors.map(d => (
-                                    <div key={d.name} onClick={() => setDebtorDetailName(d.name)} className="p-6 rounded-[35px] bg-white border-2 border-amber-50 shadow-sm flex justify-between items-center cursor-pointer hover:border-amber-200 transition-all">
+                                Array.from(debtorsMap.entries()).map(([name, data]) => (
+                                    <div key={name} onClick={() => setDebtorDetailName(name)} className="p-6 rounded-[35px] bg-white border-2 border-amber-50 shadow-sm flex justify-between items-center cursor-pointer hover:border-amber-200 transition-all">
                                         <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 font-black">{d.name[0]}</div>
+                                            <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 font-black">{name[0]}</div>
                                             <div>
-                                                <div className="font-black text-slate-800">{d.name}</div>
-                                                <div className="text-[10px] font-bold text-slate-400">{d.transactions.length} مديونية مسجلة</div>
+                                                <div className="font-black text-slate-800">{name}</div>
+                                                <div className="text-[10px] font-bold text-slate-400">{data.transactions.length} مديونية مسجلة</div>
                                             </div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-xl font-black text-amber-700">{(d.total || 0).toFixed(2)} <span className="text-[8px]">ج.م</span></div>
+                                            <div className="text-xl font-black text-amber-700">{(data.total || 0).toFixed(2)} <span className="text-[8px]">ج.م</span></div>
                                             <div className="text-[9px] font-bold text-slate-300 flex items-center gap-1">التفاصيل <ChevronLeft size={10} /></div>
                                         </div>
                                     </div>
@@ -1568,9 +1828,9 @@ const handleLogout = useCallback(async () => {
                                     <button onClick={() => setDebtorDetailName(null)} className="flex items-center gap-2 text-slate-400 font-black text-xs hover:text-slate-600"><ChevronRight size={16} /> العودة لقائمة المديونيات</button>
                                     <div className="bg-amber-600 p-6 rounded-[35px] text-white shadow-xl mb-4">
                                         <div className="text-[9px] font-black opacity-70">إجمالي دين {debtorDetailName}</div>
-                                        <div className="text-3xl font-black">{(financeStats.debtors.find(d => d.name === debtorDetailName)?.total || 0).toFixed(2)} ج.م</div>
+                                        <div className="text-3xl font-black">{(debtorsMap.get(debtorDetailName)?.total || 0).toFixed(2)} ج.م</div>
                                     </div>
-                                    {financeStats.debtors.find(d => d.name === debtorDetailName)?.transactions.map((t: any) => (
+                                    {debtorsMap.get(debtorDetailName)?.transactions.map((t: any) => (
                                         <div key={t.id}
                                             className={`p-5 rounded-[30px] bg-white border transition-all ${selectedIds.has(t.id) ? 'border-emerald-500 bg-emerald-50/20' : 'border-slate-100'}`}
                                             onMouseDown={() => startSelect(t.id)}
@@ -1596,7 +1856,7 @@ const handleLogout = useCallback(async () => {
                                     ))}
                                 </div>
                             ) : (
-                                financeStats.list.map(s => (
+                                filteredSales.filtered.map(s => (
                                     <div key={s.id}
                                         className={`p-6 rounded-[35px] bg-white border transition-all shadow-sm flex flex-col gap-4 ${s.isReturned ? 'opacity-40 grayscale' : ''} ${selectedIds.has(s.id) ? 'border-emerald-500 bg-emerald-100/30' : 'border-slate-100'}`}
                                         onMouseDown={() => startSelect(s.id!)}
@@ -1617,9 +1877,9 @@ const handleLogout = useCallback(async () => {
                                                 </div>
                                             </div>
                                             <div className="flex gap-2">
-                                                {s.cashAmount > 0 && <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><Wallet size={16} /></div>}
-                                                {s.bankAmount > 0 && <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><CreditCard size={16} /></div>}
-                                                {s.debtAmount > 0 && <div className="p-2 bg-amber-50 text-amber-600 rounded-xl"><UserMinus size={16} /></div>}
+                                                {(s.cashAmount || 0) > 0 && <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><Wallet size={16} /></div>}
+                                                {(s.bankAmount || 0) > 0 && <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><CreditCard size={16} /></div>}
+                                                {(s.debtAmount || 0) > 0 && <div className="p-2 bg-amber-50 text-amber-600 rounded-xl"><UserMinus size={16} /></div>}
                                             </div>
                                         </div>
 
@@ -1650,7 +1910,7 @@ const handleLogout = useCallback(async () => {
                                                 })()}
                                                 <div className="flex justify-between items-center">
                                                     <span className="text-[10px] font-bold text-slate-400">{s.customerName || 'زبون عام'}</span>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleReturn(s); }} className="text-rose-500 font-black text-[10px] px-4 py-2 hover:bg-rose-50 rounded-xl transition-all">إرجاع</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleReturn(s.id); }} className="text-rose-500 font-black text-[10px] px-4 py-2 hover:bg-rose-50 rounded-xl transition-all">إرجاع</button>
                                                 </div>
                                             </div>
                                         )}
@@ -1761,7 +2021,7 @@ const handleLogout = useCallback(async () => {
                                 <button onClick={() => handleCalcDelete()} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">←</button>
                                 
                                 {/* الأرقام */}
-                                {[7,8,9,4,5,6,1,2,3].map(num => (
+                                {[7,8,9].map(num => (
                                     <button 
                                         key={num} 
                                         onClick={() => handleCalcNumber(num.toString())}
@@ -1771,12 +2031,149 @@ const handleLogout = useCallback(async () => {
                                     </button>
                                 ))}
                                 
-                                {/* الصف الأخير */}
+                                {/* الصف الثاني */}
+                                <button onClick={() => handleCalcNumber('4')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">4</button>
+                                <button onClick={() => handleCalcNumber('5')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">5</button>
+                                <button onClick={() => handleCalcNumber('6')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">6</button>
+                                <button onClick={() => handleCalcOperator('-')} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">-</button>
+                                
+                                {/* الصف الثالث */}
+                                <button onClick={() => handleCalcNumber('1')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">1</button>
+                                <button onClick={() => handleCalcNumber('2')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">2</button>
+                                <button onClick={() => handleCalcNumber('3')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">3</button>
+                                <button onClick={() => handleCalcEquals()} className="bg-emerald-600 text-white p-4 rounded-xl font-bold hover:bg-emerald-700 transition-all">=</button>
+                                
+                                {/* الصف الرابع */}
                                 <button onClick={() => handleCalcNumber('0')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">0</button>
                                 <button onClick={() => handleCalcDecimal()} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">.</button>
-                                <button onClick={() => handleCalcOperator('-')} className="bg-slate-200 p-4 rounded-xl font-bold hover:bg-slate-300 transition-all">-</button>
-                                <button onClick={() => handleCalcEquals()} className="bg-emerald-600 text-white p-4 rounded-xl font-bold hover:bg-emerald-700 transition-all">=</button>
+                                <button onClick={() => handleCalcOperator('+')} className="bg-emerald-500 text-white p-4 rounded-xl font-bold hover:bg-emerald-600 transition-all">+</button>
+                                <button onClick={() => handleCalcDelete()} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">←</button>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {view === 'scanner' && (
+                    <div className="p-6 animate-in fade-in duration-500">
+                        <div className="max-w-md mx-auto">
+                            {/* Scanner Mode Selector */}
+                            <div className="bg-white rounded-3xl shadow-2xl p-6 mb-4">
+                                <h2 className="text-2xl font-black text-slate-800 mb-6 text-center">ماسح الباركود</h2>
+                                
+                                {/* Mode Selection */}
+                                <div className="grid grid-cols-2 gap-3 mb-6">
+                                    <button
+                                        onClick={() => setScannerMode('sell')}
+                                        className={`p-4 rounded-2xl font-black transition-all ${
+                                            scannerMode === 'sell' 
+                                                ? 'bg-emerald-600 text-white shadow-lg' 
+                                                : 'bg-slate-50 text-slate-600 hover:bg-emerald-50'
+                                        }`}
+                                    >
+                                        <ShoppingCart className="mx-auto mb-2" size={24} />
+                                        <div className="text-sm">بيع</div>
+                                        <div className="text-xs opacity-75">إضافة للسلة</div>
+                                    </button>
+                                    <button
+                                        onClick={() => setScannerMode('add')}
+                                        className={`p-4 rounded-2xl font-black transition-all ${
+                                            scannerMode === 'add' 
+                                                ? 'bg-blue-600 text-white shadow-lg' 
+                                                : 'bg-slate-50 text-slate-600 hover:bg-blue-50'
+                                        }`}
+                                    >
+                                        <Package className="mx-auto mb-2" size={24} />
+                                        <div className="text-sm">إضافة</div>
+                                        <div className="text-xs opacity-75">تعديل دواء</div>
+                                    </button>
+                                </div>
+                                
+                                {/* Scanner Controls */}
+                                {!isScannerActive ? (
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={handleStartScanner}
+                                            className="w-full bg-emerald-600 text-white p-6 rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3"
+                                        >
+                                            <Camera size={32} />
+                                            بدء المسح
+                                        </button>
+                                        <button
+                                            onClick={handleManualBarcodeInput}
+                                            className="w-full bg-slate-200 text-slate-700 p-4 rounded-2xl font-black hover:bg-slate-300 transition-all"
+                                        >
+                                            إدخال الباركود يدوياً
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {/* Active Scanner View */}
+                                        <div className="bg-slate-900 rounded-2xl p-8 relative overflow-hidden">
+                                            <div className="absolute inset-0 border-2 border-emerald-500 rounded-2xl animate-pulse"></div>
+                                            <div className="relative z-10 text-center">
+                                                <ScanLine className="mx-auto mb-4 text-emerald-400" size={64} />
+                                                <p className="text-emerald-400 font-bold">وجه الكاميرا نحو الباركود</p>
+                                                <p className="text-slate-400 text-sm mt-2">سيتم التعرف تلقائياً...</p>
+                                            </div>
+                                        </div>
+                                        
+                                        <button
+                                            onClick={handleStopScanner}
+                                            className="w-full bg-rose-500 text-white p-4 rounded-2xl font-black hover:bg-rose-600 transition-all"
+                                        >
+                                            إلغاء المسح
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Scanner Result Modal */}
+                            {showScannerResult && (
+                                <div className="bg-white rounded-3xl shadow-2xl p-6 animate-in zoom-in-95 duration-300">
+                                    <h3 className="text-lg font-black text-slate-800 mb-4">نتيجة المسح</h3>
+                                    
+                                    {scannedBarcode && (
+                                        <div className="bg-slate-50 p-4 rounded-xl mb-4">
+                                            <p className="text-sm font-bold text-slate-600">الباركود:</p>
+                                            <p className="text-lg font-mono font-black">{scannedBarcode}</p>
+                                        </div>
+                                    )}
+                                    
+                                    {foundMedicine ? (
+                                        <div className="bg-emerald-50 p-4 rounded-xl mb-4">
+                                            <p className="text-sm font-bold text-emerald-600">الدواء:</p>
+                                            <p className="text-lg font-black">{foundMedicine.name}</p>
+                                            <p className="text-sm text-emerald-700">السعر: {foundMedicine.price} ج.م</p>
+                                            <p className="text-sm text-emerald-700">المخزون: {foundMedicine.stock}</p>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-rose-50 p-4 rounded-xl mb-4">
+                                            <p className="text-sm font-bold text-rose-600">النتيجة:</p>
+                                            <p className="text-lg font-black text-rose-700">الدواء غير موجود</p>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={() => setShowScannerResult(false)}
+                                            className="flex-1 bg-slate-200 text-slate-700 p-3 rounded-xl font-black hover:bg-slate-300 transition-all"
+                                        >
+                                            إغلاق
+                                        </button>
+                                        {foundMedicine && scannerMode === 'sell' && (
+                                            <button
+                                                onClick={() => {
+                                                    setView('pos');
+                                                    setShowScannerResult(false);
+                                                }}
+                                                className="flex-1 bg-emerald-600 text-white p-3 rounded-xl font-black hover:bg-emerald-700 transition-all"
+                                            >
+                                                عرض السلة
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -1802,6 +2199,53 @@ const handleLogout = useCallback(async () => {
                             ))}
                             {notifs.length === 0 && (
                                 <div className="text-center py-20 opacity-20"><Bell size={64} className="mx-auto mb-4" /><p className="font-black">لا توجد إشعارات جديدة</p></div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {view === 'notes' && (
+                    <div className="space-y-4 animate-in fade-in duration-500">
+                        <div className="flex justify-between items-center px-2 mb-6">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">الملاحظات {notes.length > 0 && <span className="text-sm bg-blue-100 text-blue-600 px-3 py-1 rounded-full">{notes.length}</span>}</h2>
+                            <button onClick={() => { setEditingNote(null); setNoteData({ title: '', content: '', type: 'private' }); setIsNoteModalOpen(true); }} className="text-xs font-black text-blue-600 bg-blue-50 px-5 py-2.5 rounded-2xl">إضافة ملاحظة</button>
+                        </div>
+                        
+                        {/* Filters */}
+                        <div className="flex gap-2 mb-4">
+                            <select value={notesFilter} onChange={(e) => setNotesFilter(e.target.value as 'all' | 'private' | 'public')} className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold">
+                                <option value="all">الكل</option>
+                                <option value="private">خاصة</option>
+                                <option value="public">عامة</option>
+                            </select>
+                            <input type="date" value={notesDateFilter} onChange={(e) => setNotesDateFilter(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold" />
+                        </div>
+                        
+                        <div className="space-y-3">
+                            {filteredNotes.map(note => (
+                                <div key={note.id} className={`p-6 rounded-[35px] bg-white shadow-sm border transition-all hover:scale-[1.02] ${note.type === 'private' ? 'border-amber-200' : 'border-blue-200'}`}>
+                                    <div className="flex justify-between items-start mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`p-2 rounded-xl ${note.type === 'private' ? 'bg-amber-50 text-amber-500' : 'bg-blue-50 text-blue-500'}`}>
+                                                <NotebookPen size={16} />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-slate-800">{note.title}</h3>
+                                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                                    {new Date(note.createdAt).toLocaleString('ar-EG')} • {note.type === 'private' ? 'خاصة' : 'عامة'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => { setEditingNote(note); setNoteData({ title: note.title, content: note.content, type: note.type }); setIsNoteModalOpen(true); }} className="text-slate-300 hover:text-blue-500"><Edit3 size={16} /></button>
+                                            <button onClick={async () => { if (confirm('حذف هذه الملاحظة؟')) { await db.notes.update(note.id, { isDeleted: true }); loadData(); } }} className="text-slate-300 hover:text-rose-500"><Trash2 size={16} /></button>
+                                        </div>
+                                    </div>
+                                    <p className="text-slate-700 text-sm leading-relaxed">{note.content}</p>
+                                </div>
+                            ))}
+                            {filteredNotes.length === 0 && (
+                                <div className="text-center py-20 opacity-20"><NotebookPen size={64} className="mx-auto mb-4" /><p className="font-black">لا توجد ملاحظات</p></div>
                             )}
                         </div>
                     </div>
@@ -2281,6 +2725,40 @@ const handleLogout = useCallback(async () => {
                                 تصدير السجل
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Notes Modal */}
+            {isNoteModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
+                    <div className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[45px] shadow-2xl animate-in slide-in-from-bottom">
+                        <div className="p-8 pb-4 flex justify-between items-center">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
+                                <NotebookPen className="text-blue-600" /> {editingNote ? 'تعديل ملاحظة' : 'إضافة ملاحظة'}
+                            </h2>
+                            <button onClick={() => setIsNoteModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-all"><X /></button>
+                        </div>
+                        <form onSubmit={handleNoteSubmit} className="p-8 pt-4 space-y-5">
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">عنوان الملاحظة</label>
+                                <input type="text" required placeholder="أدخل عنوان الملاحظة..." className="w-full bg-slate-50 p-5 rounded-3xl font-bold outline-none border-2 border-transparent focus:border-blue-500 transition-all" value={noteData.title} onChange={e => setNoteData({ ...noteData, title: e.target.value })} />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">المحتوى</label>
+                                <textarea required placeholder="أدخل محتوى الملاحظة..." rows={4} className="w-full bg-slate-50 p-5 rounded-3xl font-bold outline-none border-2 border-transparent focus:border-blue-500 transition-all resize-none" value={noteData.content} onChange={e => setNoteData({ ...noteData, content: e.target.value })} />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">نوع الملاحظة</label>
+                                <select value={noteData.type} onChange={e => setNoteData({ ...noteData, type: e.target.value as 'private' | 'public' })} className="w-full bg-slate-50 p-5 rounded-3xl font-bold outline-none border-2 border-transparent focus:border-blue-500 transition-all">
+                                    <option value="private">خاصة (محلية فقط)</option>
+                                    <option value="public">عامة (في السحاب)</option>
+                                </select>
+                            </div>
+                            <button type="submit" className="w-full bg-slate-900 text-white py-6 rounded-[30px] font-black text-lg shadow-xl active:scale-95 transition-all mt-4">
+                                {editingNote ? 'تحديث الملاحظة' : 'حفظ الملاحظة'}
+                            </button>
+                        </form>
                     </div>
                 </div>
             )}

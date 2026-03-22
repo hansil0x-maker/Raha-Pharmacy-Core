@@ -56,7 +56,7 @@ export interface AppNotification {
   id: string;
   pharmacyId: string;
   message: string;
-  type?: string;
+  type?: 'error' | 'warning' | 'info' | 'success';
   timestamp: number;
 }
 
@@ -95,4 +95,16 @@ export interface CartItem {
   quantity: number;
 }
 
-export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications';
+export interface Note {
+  id: string;
+  pharmacyId: string;
+  title: string;
+  content: string;
+  type: 'private' | 'public';
+  createdAt: number;
+  updatedAt: number;
+  createdBy?: string;
+  isDeleted?: boolean;
+}
+
+export type ViewType = 'pos' | 'inventory' | 'accounting' | 'expenses' | 'notifications' | 'calculator' | 'scanner' | 'notes';
