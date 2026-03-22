@@ -15,6 +15,8 @@ export interface Medicine {
   lastSold?: number | null;
   unitsPerPkg?: number;
   minStockAlert?: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface Sale {

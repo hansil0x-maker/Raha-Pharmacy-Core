@@ -1,5 +1,5 @@
 import Dexie, { Table } from 'dexie';
-import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmacy, PharmacyDevice } from './types';
+import { Medicine, Sale, Expense, Customer, AppNotification, WantedItem, Pharmacy, PharmacyDevice, Note } from './types';
 
 // =====================================================
 // REAL SOLUTION - SUPABASE LOADING FIX
@@ -74,6 +74,7 @@ class RahaDB extends Dexie {
     wantedItems!: Table<WantedItem, string>;
     pharmacies!: Table<Pharmacy, string>;
     pharmacyDevices!: Table<PharmacyDevice, string>;
+    notes!: Table<Note, string>;
 
     constructor() {
         super('RahaDB');
@@ -87,13 +88,14 @@ class RahaDB extends Dexie {
         
         this.version(32).stores({ 
             pharmacies: 'id, pharmacyKey, name',
-            medicines: 'id, pharmacyId, name, barcode, price, costPrice, stock, category, expiryDate, supplier, supplierPhone, addedDate, usageCount, lastSold, unitsPerPkg, minStockAlert',
+            medicines: 'id, pharmacyId, name, barcode, price, costPrice, stock, category, expiryDate, supplier, supplierPhone, addedDate, usageCount, lastSold, unitsPerPkg, minStockAlert, createdAt, updatedAt',
             sales: 'id, timestamp, pharmacyId, totalAmount, discount, netAmount, cashAmount, bankAmount, debtAmount, bankTrxId, customerName, totalCost, profit, itemsJson, isReturned',
             expenses: 'id, timestamp, pharmacyId, amount, description, type',
             customers: 'id, name, phone, email, address, notes, createdAt',
             notifications: 'id, title, message, type, read, createdAt, data, timestamp',
             wantedItems: 'id, pharmacyId, itemName, notes, requestCount, status, createdAt, reminderAt',
-            pharmacyDevices: 'id, pharmacyId, hardwareId, deviceName, lastLogin, isBanned'
+            pharmacyDevices: 'id, pharmacyId, hardwareId, deviceName, lastLogin, isBanned',
+            notes: 'id, pharmacyId, title, content, type, createdAt, updatedAt, createdBy, isDeleted'
         });
 
         // Handle upgrade errors by deleting database
@@ -228,7 +230,9 @@ class RahaDB extends Dexie {
                         usageCount: m.usage_count,
                         lastSold: m.last_sold,
                         unitsPerPkg: m.units_per_pkg,
-                        minStockAlert: m.min_stock_alert
+                        minStockAlert: m.min_stock_alert,
+                        createdAt: m.created_at ? new Date(m.created_at).getTime() : undefined,
+                        updatedAt: m.updated_at ? new Date(m.updated_at).getTime() : undefined
                     })));
                 }
             }
@@ -276,6 +280,19 @@ class RahaDB extends Dexie {
             const supabase = await getSupabase();
             if (!supabase) return;
             
+            // التحقق من وجود الأعمدة قبل المزامنة
+            const { data: schemaCheck } = await supabase
+                .from('information_schema.columns')
+                .select('column_name')
+                .eq('table_name', 'medicines')
+                .eq('column_name', 'created_at')
+                .single();
+            
+            if (!schemaCheck) {
+                console.warn('⚠️ medicines table missing created_at column, skipping sync');
+                return;
+            }
+            
             const { error } = await supabase
                 .from('medicines')
                 .upsert({
@@ -294,7 +311,9 @@ class RahaDB extends Dexie {
                     usage_count: medicine.usageCount,
                     last_sold: medicine.lastSold,
                     units_per_pkg: medicine.unitsPerPkg,
-                    min_stock_alert: medicine.minStockAlert
+                    min_stock_alert: medicine.minStockAlert,
+                    created_at: medicine.createdAt || Date.now(),
+                    updated_at: medicine.updatedAt || Date.now()
                 });
             
             if (error) {
@@ -393,7 +412,9 @@ class RahaDB extends Dexie {
                         usage_count: med.usageCount,
                         last_sold: med.lastSold,
                         units_per_pkg: med.unitsPerPkg,
-                        min_stock_alert: med.minStockAlert
+                        min_stock_alert: med.minStockAlert,
+                        created_at: med.createdAt || Date.now(),
+                        updated_at: med.updatedAt || Date.now()
                     });
                 if (error) {
                     console.error('❌ Medicine sync error:', error);

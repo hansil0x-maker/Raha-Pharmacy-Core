@@ -2020,33 +2020,27 @@ const handleLogout = useCallback(async () => {
                                 <button onClick={() => handleCalcOperator('*')} className="bg-slate-200 p-4 rounded-xl font-bold hover:bg-slate-300 transition-all">×</button>
                                 <button onClick={() => handleCalcDelete()} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">←</button>
                                 
-                                {/* الأرقام */}
-                                {[7,8,9].map(num => (
-                                    <button 
-                                        key={num} 
-                                        onClick={() => handleCalcNumber(num.toString())}
-                                        className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all"
-                                    >
-                                        {num}
-                                    </button>
-                                ))}
-                                
                                 {/* الصف الثاني */}
-                                <button onClick={() => handleCalcNumber('4')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">4</button>
-                                <button onClick={() => handleCalcNumber('5')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">5</button>
-                                <button onClick={() => handleCalcNumber('6')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">6</button>
+                                <button onClick={() => handleCalcNumber('7')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">7</button>
+                                <button onClick={() => handleCalcNumber('8')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">8</button>
+                                <button onClick={() => handleCalcNumber('9')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">9</button>
                                 <button onClick={() => handleCalcOperator('-')} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">-</button>
                                 
                                 {/* الصف الثالث */}
+                                <button onClick={() => handleCalcNumber('4')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">4</button>
+                                <button onClick={() => handleCalcNumber('5')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">5</button>
+                                <button onClick={() => handleCalcNumber('6')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">6</button>
+                                <button onClick={() => handleCalcOperator('+')} className="bg-emerald-500 text-white p-4 rounded-xl font-bold hover:bg-emerald-600 transition-all">+</button>
+                                
+                                {/* الصف الرابع */}
                                 <button onClick={() => handleCalcNumber('1')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">1</button>
                                 <button onClick={() => handleCalcNumber('2')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">2</button>
                                 <button onClick={() => handleCalcNumber('3')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">3</button>
                                 <button onClick={() => handleCalcEquals()} className="bg-emerald-600 text-white p-4 rounded-xl font-bold hover:bg-emerald-700 transition-all">=</button>
                                 
-                                {/* الصف الرابع */}
-                                <button onClick={() => handleCalcNumber('0')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">0</button>
+                                {/* الصف الخامس */}
+                                <button onClick={() => handleCalcNumber('0')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all col-span-2">0</button>
                                 <button onClick={() => handleCalcDecimal()} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">.</button>
-                                <button onClick={() => handleCalcOperator('+')} className="bg-emerald-500 text-white p-4 rounded-xl font-bold hover:bg-emerald-600 transition-all">+</button>
                                 <button onClick={() => handleCalcDelete()} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">←</button>
                             </div>
                         </div>
