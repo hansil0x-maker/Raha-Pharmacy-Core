@@ -12,10 +12,10 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Global Supabase instance - START AS NULL
 let supabase: any = null;
 
-// REAL SOLUTION: Load Supabase with browser compatibility
+// REAL SOLUTION: Load Supabase with browser compatibility - Singleton Pattern
 export async function initSupabase() {
-    if (supabase) return;
-    if (!SUPABASE_URL || !SUPABASE_KEY || typeof window === 'undefined') return;
+    if (supabase) return supabase; // Return existing instance
+    if (!SUPABASE_URL || !SUPABASE_KEY || typeof window === 'undefined') return null;
 
     try {
         let createClient: any;
@@ -48,6 +48,7 @@ export async function initSupabase() {
         };
         
         console.log('✅ Supabase initialized successfully (REAL SOLUTION)');
+        return supabase;
     } catch (error) {
         console.error('❌ Failed to initialize Supabase:', error);
     }

@@ -4,7 +4,7 @@ import {
     CheckCircle2, TrendingUp, CreditCard, Wallet, UserMinus,
     ArrowRight, Minus, Edit3, Receipt, Calendar,
     RotateCcw, Download, Upload, Layers, Bell, Info, ArrowUpRight, Clock, ShieldAlert, Filter, User, CloudDownload,
-    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered
+    ChevronLeft, ChevronRight, NotebookPen, ClipboardList, Share2, Sparkles, ListOrdered, Calculator, ScanLine
 } from 'lucide-react';
 import { db } from './db';
 import { Medicine, ViewType, Sale, CartItem, Expense, Customer, AppNotification, WantedItem, Pharmacy } from './types';
@@ -56,6 +56,17 @@ const App: React.FC = () => {
     const [isWantedOpen, setIsWantedOpen] = useState(false);
     const [isWantedListOpen, setIsWantedListOpen] = useState(false);
     const [wantedData, setWantedData] = useState({ name: '', note: '', reminder: '' });
+    
+    // Calculator State
+    const [calcDisplay, setCalcDisplay] = useState('0');
+    const [calcPreviousValue, setCalcPreviousValue] = useState<number | null>(null);
+    const [calcOperation, setCalcOperation] = useState<string | null>(null);
+    const [calcWaitingForNewValue, setCalcWaitingForNewValue] = useState(false);
+    
+    // Enhanced Accounting Filters State
+    const [showReturns, setShowReturns] = useState(false);
+    const [showDeleted, setShowDeleted] = useState(false);
+    const [showResetHistory, setShowResetHistory] = useState(false);
 
     // Multi-Select & Advanced Debt
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -212,6 +223,83 @@ const App: React.FC = () => {
             clearTimeout(rTimer);
         };
     }, []); // Empty dependencies - run only once
+
+    // Calculator Functions
+    const handleCalcNumber = useCallback((num: string) => {
+        if (calcWaitingForNewValue) {
+            setCalcDisplay(num);
+            setCalcWaitingForNewValue(false);
+        } else {
+            setCalcDisplay(calcDisplay === '0' ? num : calcDisplay + num);
+        }
+    }, [calcDisplay, calcWaitingForNewValue]);
+
+    const handleCalcDecimal = useCallback(() => {
+        if (calcWaitingForNewValue) {
+            setCalcDisplay('0.');
+            setCalcWaitingForNewValue(false);
+        } else if (calcDisplay.indexOf('.') === -1) {
+            setCalcDisplay(calcDisplay + '.');
+        }
+    }, [calcDisplay, calcWaitingForNewValue]);
+
+    const handleCalcOperator = useCallback((nextOperator: string) => {
+        const inputValue = parseFloat(calcDisplay);
+
+        if (calcOperation && !calcWaitingForNewValue) {
+            setCalcOperation(nextOperator);
+            return;
+        }
+
+        if (calcPreviousValue === null) {
+            setCalcPreviousValue(inputValue);
+        } else if (calcOperation) {
+            const currentValue = calcPreviousValue || 0;
+            const newValue = calculate(currentValue, inputValue, calcOperation);
+            setCalcDisplay(String(newValue));
+            setCalcPreviousValue(newValue);
+        }
+
+        setCalcWaitingForNewValue(true);
+        setCalcOperation(nextOperator);
+    }, [calcDisplay, calcOperation, calcPreviousValue, calcWaitingForNewValue]);
+
+    const handleCalcEquals = useCallback(() => {
+        const inputValue = parseFloat(calcDisplay);
+
+        if (calcPreviousValue !== null && calcOperation) {
+            const newValue = calculate(calcPreviousValue, inputValue, calcOperation);
+            setCalcDisplay(String(newValue));
+            setCalcPreviousValue(null);
+            setCalcOperation(null);
+            setCalcWaitingForNewValue(true);
+        }
+    }, [calcDisplay, calcOperation, calcPreviousValue]);
+
+    const handleCalcClear = useCallback(() => {
+        setCalcDisplay('0');
+        setCalcPreviousValue(null);
+        setCalcOperation(null);
+        setCalcWaitingForNewValue(false);
+    }, []);
+
+    const handleCalcDelete = useCallback(() => {
+        if (calcWaitingForNewValue) {
+            setCalcWaitingForNewValue(false);
+        } else {
+            setCalcDisplay(calcDisplay === '0' ? '0' : calcDisplay.slice(0, -1));
+        }
+    }, [calcDisplay, calcWaitingForNewValue]);
+
+    const calculate = (firstValue: number, secondValue: number, operation: string): number => {
+        switch (operation) {
+            case '+': return firstValue + secondValue;
+            case '-': return firstValue - secondValue;
+            case '*': return firstValue * secondValue;
+            case '/': return firstValue / secondValue;
+            default: return secondValue;
+        }
+    };
 
     // Re-check authentication state after data loads
     useEffect(() => {
@@ -955,14 +1043,19 @@ const handlePharmacyVerify = useCallback(async (e: React.FormEvent) => {
 
 const handleLogout = useCallback(async () => {
     if (confirm("هل أنت متأكد من تسجيل الخروج؟ سيتم مسح البيانات المحلية.")) {
-        await db.sales.clear();
-        await db.expenses.clear();
-        await db.customers.clear();
-        await db.notifications.clear();
-        await db.wantedItems.clear();
-        setCurrentPharmacy(null);
-        setIsAuthenticated(false);
-        window.location.reload();
+        try {
+            await db.sales.clear();
+            await db.expenses.clear();
+            await db.customers.clear();
+            await db.notifications.clear();
+            await db.wantedItems.clear();
+            setCurrentPharmacy(null);
+            setIsAuthenticated(false);
+            window.location.reload();
+        } catch (error) {
+            console.error('❌ Error during logout:', error);
+            triggerNotif("حدث خطأ أثناء تسجيل الخروج", "error");
+        }
     }
 }, []);
 
@@ -1040,6 +1133,19 @@ const handleLogout = useCallback(async () => {
 
     return (
         <div className="flex flex-col h-screen bg-[#F8FAFC] text-slate-900 overflow-hidden font-medium">
+            {/* Loading State */}
+            {isSyncing && (
+                <div className="fixed top-4 left-4 z-50 bg-white p-3 rounded-xl shadow-lg border border-slate-200 flex items-center gap-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-emerald-600"></div>
+                    <span className="text-sm font-bold text-slate-700">جاري المزامنة...</span>
+                </div>
+            )}
+            
+            {/* Connection Status */}
+            <div className="fixed top-4 right-4 z-50 bg-white p-2 rounded-xl shadow-lg border border-slate-200">
+                <div className={`w-3 h-3 rounded-full ${navigator.onLine ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+            </div>
+            
             {activeNotif && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] w-full max-w-xs animate-in slide-in-from-top-full duration-300">
                     <div className={`p-4 rounded-2xl shadow-2xl border flex items-center gap-3 ${activeNotif.type === 'error' ? 'bg-rose-600 text-white' : activeNotif.type === 'warning' ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>
@@ -1363,16 +1469,73 @@ const handleLogout = useCallback(async () => {
                         </div>
 
                         <div className="flex flex-col gap-3">
-                            <div className="flex items-center gap-3 bg-white p-4 rounded-3xl shadow-sm border border-slate-50">
-                                <Calendar className="text-emerald-600" size={20} />
-                                <input type="date" className="flex-grow bg-transparent font-black outline-none" value={accDateFilter} onChange={e => setAccDateFilter(e.target.value)} />
-                                <div className="w-px h-8 bg-slate-100 mx-2"></div>
-                                <select className="bg-transparent font-black outline-none text-xs" value={accPaymentFilter} onChange={e => { setAccPaymentFilter(e.target.value as any); setDebtorDetailName(null); }}>
-                                    <option value="all">كل العمليات</option>
-                                    <option value="cash">كاش</option>
-                                    <option value="bank">بنكك</option>
-                                    <option value="debt">مديونيات</option>
-                                </select>
+                            {/* Enhanced Filter Bar */}
+                            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+                                {/* Status Indicator */}
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-3 h-3 rounded-full animate-pulse ${
+                                            salesHistory.some(s => s.isReturned) ? 'bg-amber-500' : 
+                                            salesHistory.some(s => s.deleted) ? 'bg-rose-500' : 'bg-emerald-500'
+                                        }`} title={
+                                            salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 
+                                            salesHistory.some(s => s.deleted) ? 'يوجد محذوفات' : 'التقارير نظيفة'
+                                        }></div>
+                                        <span className="text-xs font-black text-slate-400 uppercase">
+                                            {salesHistory.some(s => s.isReturned) ? 'يوجد مرجعات' : 
+                                             salesHistory.some(s => s.deleted) ? 'يوجد محذوفات' : 'التقارير نظيفة'}
+                                        </span>
+                                    </div>
+                                </div>
+                                
+                                {/* Filter Controls */}
+                                <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl">
+                                        <Calendar className="text-emerald-600" size={16} />
+                                        <input type="date" className="bg-transparent font-black outline-none text-sm" value={accDateFilter} onChange={e => setAccDateFilter(e.target.value)} />
+                                    </div>
+                                    
+                                    <div className="w-px h-6 bg-slate-200"></div>
+                                    
+                                    <select className="bg-slate-50 px-3 py-2 rounded-xl font-black outline-none text-sm" value={accPaymentFilter} onChange={e => { setAccPaymentFilter(e.target.value as any); setDebtorDetailName(null); }}>
+                                        <option value="all">كل العمليات</option>
+                                        <option value="cash">كاش</option>
+                                        <option value="bank">بنكك</option>
+                                        <option value="debt">مديونيات</option>
+                                    </select>
+                                    
+                                    <div className="w-px h-6 bg-slate-200"></div>
+                                    
+                                    {/* Returns Filter */}
+                                    <button
+                                        onClick={() => setShowReturns(!showReturns)}
+                                        className={`px-3 py-2 rounded-xl font-black text-sm transition-all ${
+                                            showReturns ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-amber-50'
+                                        }`}
+                                    >
+                                        المرجعات {showReturns && '✓'}
+                                    </button>
+                                    
+                                    {/* Deleted Filter */}
+                                    <button
+                                        onClick={() => setShowDeleted(!showDeleted)}
+                                        className={`px-3 py-2 rounded-xl font-black text-sm transition-all ${
+                                            showDeleted ? 'bg-rose-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-rose-50'
+                                        }`}
+                                    >
+                                        المحذوفات {showDeleted && '✓'}
+                                    </button>
+                                    
+                                    <div className="w-px h-6 bg-slate-200"></div>
+                                    
+                                    {/* Reset History Button */}
+                                    <button
+                                        onClick={() => setShowResetHistory(!showResetHistory)}
+                                        className="px-3 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-sm hover:bg-emerald-100 transition-all"
+                                    >
+                                        سجل التصفير
+                                    </button>
+                                </div>
                             </div>
 
                             {accPaymentFilter === 'debt' && (
@@ -1581,6 +1744,43 @@ const handleLogout = useCallback(async () => {
                     </div>
                 )}
 
+                {view === 'calculator' && (
+                    <div className="p-6 animate-in fade-in duration-500">
+                        <div className="max-w-md mx-auto bg-white rounded-3xl shadow-2xl p-6">
+                            {/* الشاشة */}
+                            <div className="bg-slate-900 text-emerald-400 p-6 rounded-2xl text-right text-3xl font-mono mb-4">
+                                {calcDisplay || '0'}
+                            </div>
+                            
+                            {/* الأزرار */}
+                            <div className="grid grid-cols-4 gap-3">
+                                {/* الصف الأول */}
+                                <button onClick={() => handleCalcClear()} className="bg-rose-500 text-white p-4 rounded-xl font-bold hover:bg-rose-600 transition-all">C</button>
+                                <button onClick={() => handleCalcOperator('/')} className="bg-slate-200 p-4 rounded-xl font-bold hover:bg-slate-300 transition-all">÷</button>
+                                <button onClick={() => handleCalcOperator('*')} className="bg-slate-200 p-4 rounded-xl font-bold hover:bg-slate-300 transition-all">×</button>
+                                <button onClick={() => handleCalcDelete()} className="bg-amber-500 text-white p-4 rounded-xl font-bold hover:bg-amber-600 transition-all">←</button>
+                                
+                                {/* الأرقام */}
+                                {[7,8,9,4,5,6,1,2,3].map(num => (
+                                    <button 
+                                        key={num} 
+                                        onClick={() => handleCalcNumber(num.toString())}
+                                        className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all"
+                                    >
+                                        {num}
+                                    </button>
+                                ))}
+                                
+                                {/* الصف الأخير */}
+                                <button onClick={() => handleCalcNumber('0')} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">0</button>
+                                <button onClick={() => handleCalcDecimal()} className="bg-slate-50 p-4 rounded-xl font-bold hover:bg-slate-100 transition-all">.</button>
+                                <button onClick={() => handleCalcOperator('-')} className="bg-slate-200 p-4 rounded-xl font-bold hover:bg-slate-300 transition-all">-</button>
+                                <button onClick={() => handleCalcEquals()} className="bg-emerald-600 text-white p-4 rounded-xl font-bold hover:bg-emerald-700 transition-all">=</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {view === 'notifications' && (
                     <div className="space-y-4 animate-in fade-in duration-500">
                         <div className="flex justify-between items-center px-2 mb-6">
@@ -1630,8 +1830,8 @@ const handleLogout = useCallback(async () => {
 
             {/* Nav */}
             <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-100 flex justify-around items-center px-4 pt-4 pb-12 z-30 shrink-0">
-                <button onClick={() => setView('pos')} className={`flex flex-col items-center gap-1 transition-all ${view === 'pos' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
-                    <ShoppingCart size={24} strokeWidth={view === 'pos' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">البيع</span>
+                <button onClick={() => setView('calculator')} className={`flex flex-col items-center gap-1 transition-all ${view === 'calculator' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
+                    <Calculator size={24} strokeWidth={view === 'calculator' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">حاسبة</span>
                 </button>
                 <div className="relative -top-6">
                     <button
@@ -1641,8 +1841,8 @@ const handleLogout = useCallback(async () => {
                         <Plus size={32} className="-rotate-45" />
                     </button>
                 </div>
-                <button onClick={() => setView('accounting')} className={`flex flex-col items-center gap-1 transition-all ${view === 'accounting' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
-                    <BarChart3 size={24} strokeWidth={view === 'accounting' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">التقارير</span>
+                <button onClick={() => setView('scanner')} className={`flex flex-col items-center gap-1 transition-all ${view === 'scanner' ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}>
+                    <ScanLine size={24} strokeWidth={view === 'scanner' ? 3 : 2} /> <span className="text-[10px] font-black uppercase">مسح</span>
                 </button>
             </nav>
 
@@ -2008,6 +2208,83 @@ const handleLogout = useCallback(async () => {
                 </div>
             )}
 
+            {/* Reset History Modal */}
+            {showResetHistory && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[150] p-6">
+                    <div className="bg-white rounded-[35px] max-w-2xl w-full p-8 shadow-2xl max-h-[80vh] overflow-y-auto animate-in zoom-in-95 duration-300">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                                <RotateCcw className="text-emerald-600" size={24} />
+                                سجل عمليات التصفير
+                            </h2>
+                            <button onClick={() => setShowResetHistory(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-all"><X size={24} /></button>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            {/* Mock reset history data */}
+                            {[
+                                { operation: 'تصفير المبيعات', description: 'تم تصفير جميع سجلات المبيعات', timestamp: Date.now() - 86400000, status: 'success' },
+                                { operation: 'تصفير المصاريف', description: 'تم تصفير سجلات المصاريف', timestamp: Date.now() - 172800000, status: 'success' },
+                                { operation: 'تصفير المخزون', description: 'فشل عملية تصفير المخزون', timestamp: Date.now() - 259200000, status: 'failed' },
+                                { operation: 'تصفير العملاء', description: 'تم تصفير سجلات العملاء', timestamp: Date.now() - 345600000, status: 'success' },
+                            ].map((reset, index) => (
+                                <div key={index} className="bg-slate-50 p-4 rounded-xl border border-slate-200 hover:bg-slate-100 transition-all">
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-grow">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <p className="font-bold text-slate-800">{reset.operation}</p>
+                                                <div className={`px-2 py-1 rounded-full text-xs font-bold ${
+                                                    reset.status === 'success' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                                }`}>
+                                                    {reset.status === 'success' ? 'نجح' : 'فشل'}
+                                                </div>
+                                            </div>
+                                            <p className="text-sm text-slate-600 mb-2">{reset.description}</p>
+                                            <p className="text-xs text-slate-400 font-mono">
+                                                {new Date(reset.timestamp).toLocaleString('ar-EG', {
+                                                    year: 'numeric',
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {reset.status === 'success' ? (
+                                                <CheckCircle2 className="text-emerald-500" size={20} />
+                                            ) : (
+                                                <X className="text-rose-500" size={20} />
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        
+                        <div className="flex gap-3 mt-6">
+                            <button 
+                                onClick={() => setShowResetHistory(false)}
+                                className="flex-1 bg-slate-900 text-white p-4 rounded-xl font-bold hover:bg-slate-800 transition-all"
+                            >
+                                إغلاق
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    if (confirm('هل أنت متأكد من تصدير سجل التصفير؟')) {
+                                        triggerNotif('تم تصدير سجل التصفير بنجاح', 'success');
+                                        setShowResetHistory(false);
+                                    }
+                                }}
+                                className="flex-1 bg-emerald-600 text-white p-4 rounded-xl font-bold hover:bg-emerald-700 transition-all"
+                            >
+                                تصدير السجل
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Support Dialog */}
             {showSupportDialog && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[150] p-6" onClick={() => setShowSupportDialog(false)}>
@@ -2084,7 +2361,7 @@ const handleLogout = useCallback(async () => {
                                     placeholder="اختر أو ادخل اسم المورد..."
                                     className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-emerald-500"
                                     value={aggregatorSupplier.name}
-                                    onChange={e => setAggregatorSupplier({ ...aggregatorSupplier, name: e.target.value })}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAggregatorSupplier({ ...aggregatorSupplier, name: e.target.value })}
                                 />
                                 <datalist id="sup-list">{suppliers.filter(s => s !== 'الكل').map(s => <option key={s} value={s} />)}</datalist>
                             </div>
@@ -2095,7 +2372,7 @@ const handleLogout = useCallback(async () => {
                                     placeholder="مثال: 0966..."
                                     className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-emerald-500"
                                     value={aggregatorSupplier.phone}
-                                    onChange={e => setAggregatorSupplier({ ...aggregatorSupplier, phone: e.target.value })}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAggregatorSupplier({ ...aggregatorSupplier, phone: e.target.value })}
                                 />
                             </div>
 
